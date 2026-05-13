@@ -1,0 +1,155 @@
+-- ============================================================================
+-- PhoneWidget.lua - 听筒 Widget 创建与管理
+-- ============================================================================
+
+local UI = require("引擎库")
+local Config = require "Config"
+local G = require "G"
+
+local M = {}
+
+local COLORS             = Config.COLORS
+local PHONE_SQUARE_SIZE  = Config.PHONE_SQUARE_SIZE
+local PHONE_EARPIECE_SIZE = Config.PHONE_EARPIECE_SIZE
+local PHONE_DOT_SIZE     = Config.PHONE_DOT_SIZE
+
+--- 检查右侧听筒是否已连接
+local function isRightConnected(rightIdx)
+    for _, pc in ipairs(G.game.playerConnections) do
+        if pc.rightIdx == rightIdx then return true end
+    end
+    return false
+end
+
+--- 检查左侧听筒是否已连接
+local function isLeftConnected(leftIdx)
+    for _, pc in ipairs(G.game.playerConnections) do
+        if pc.leftIdx == leftIdx then return true end
+    end
+    return false
+end
+
+--- 创建色块Widget（固定位置，不可移动）
+function M.CreateSquareWidget(side, index, phoneData, posX, posY)
+    local color = COLORS[phoneData.colorIdx]
+    local isConnected = (side == "left" and isLeftConnected(index))
+        or (side == "right" and isRightConnected(index))
+
+    local sqSz = PHONE_SQUARE_SIZE
+    local dotSz = PHONE_DOT_SIZE
+
+    return UI.Panel {
+        id = side .. "_square_" .. index,
+        position = "fixed",
+        left = posX,
+        top = posY,
+        width = sqSz,
+        height = sqSz,
+        zIndex = 100,
+        backgroundColor = color.base,
+        borderRadius = 4,
+        justifyContent = "center",
+        alignItems = "center",
+        children = {
+            UI.Panel {
+                width = dotSz,
+                height = dotSz,
+                borderRadius = dotSz / 2,
+                backgroundColor = { 20, 15, 10, 240 },
+                justifyContent = "center",
+                alignItems = "center",
+                children = {
+                    UI.Label {
+                        text = isConnected and "\u{2714}" or "\u{2716}",
+                        fontSize = 18,
+                        fontColor = isConnected and { 80, 220, 100, 255 } or { 240, 240, 240, 255 },
+                        pointerEvents = "none",
+                    },
+                },
+            },
+        },
+    }
+end
+
+--- 创建听筒Widget（独立定位，拖拽时可移动）
+function M.CreateEarpieceWidget(side, index, posX, posY)
+    local game = G.game
+    local epSz = PHONE_EARPIECE_SIZE
+    local isDragging = game.dragging and game.dragSide == side and game.dragIndex == index
+
+    local img
+    if side == "left" then
+        local merged = false
+        for _, pc in ipairs(game.playerConnections) do
+            if pc.leftIdx == index then merged = true; break end
+        end
+        img = merged and "image/earpiece_up.png" or "image/earpiece_left.png"
+    else
+        img = "image/earpiece.png"
+    end
+
+    return UI.Panel {
+        id = side .. "_earpiece_" .. index,
+        position = "fixed",
+        left = posX,
+        top = posY,
+        width = epSz,
+        height = epSz,
+        zIndex = isDragging and 150 or 100,
+        backgroundImage = img,
+        backgroundFit = "contain",
+        pointerEvents = "none",
+    }
+end
+
+--- 创建所有色块和听筒Widget（分离式）
+function M.CreatePhoneWidgets()
+    M.RemovePhoneWidgets()
+    local game = G.game
+
+    for i = 1, #game.leftPhones do
+        local sqPos = game.leftPhonePositions[i]
+        local epPos = game.leftEarpiecePos[i]
+        if sqPos and epPos then
+            local sq = M.CreateSquareWidget("left", i, game.leftPhones[i], sqPos.x, sqPos.y)
+            G.phoneWidgets[#G.phoneWidgets + 1] = sq
+            game.leftSquareWidgets[i] = sq
+
+            local ep = M.CreateEarpieceWidget("left", i, epPos.x, epPos.y)
+            G.phoneWidgets[#G.phoneWidgets + 1] = ep
+            game.leftEarpieceWidgets[i] = ep
+        end
+    end
+
+    for i = 1, #game.rightPhones do
+        local sqPos = game.rightPhonePositions[i]
+        local epPos = game.rightEarpiecePos[i]
+        if sqPos and epPos then
+            local sq = M.CreateSquareWidget("right", i, game.rightPhones[i], sqPos.x, sqPos.y)
+            G.phoneWidgets[#G.phoneWidgets + 1] = sq
+            game.rightSquareWidgets[i] = sq
+
+            if not isRightConnected(i) then
+                local ep = M.CreateEarpieceWidget("right", i, epPos.x, epPos.y)
+                G.phoneWidgets[#G.phoneWidgets + 1] = ep
+                game.rightEarpieceWidgets[i] = ep
+            end
+        end
+    end
+end
+
+--- 移除所有Widget
+function M.RemovePhoneWidgets()
+    for _, w in ipairs(G.phoneWidgets) do
+        if w then w:Remove() end
+    end
+    G.phoneWidgets = {}
+    G.game.leftPhoneWidgets = {}
+    G.game.rightPhoneWidgets = {}
+    G.game.leftSquareWidgets = {}
+    G.game.rightSquareWidgets = {}
+    G.game.leftEarpieceWidgets = {}
+    G.game.rightEarpieceWidgets = {}
+end
+
+return M
