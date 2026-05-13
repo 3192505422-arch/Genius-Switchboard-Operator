@@ -1,0 +1,95 @@
+-- ============================================================================
+-- Config.lua - 游戏常量与配置表
+-- ============================================================================
+
+local M = {}
+
+M.Title = "接线员"
+
+-- 游戏状态枚举
+M.STATE = {
+    INTRO     = "intro",
+    MENU      = "menu",
+    APPLY     = "apply",
+    SHOWING   = "showing",
+    COUNTDOWN = "countdown",
+    PLAYING   = "playing",
+    SUCCESS   = "success",
+    FAIL      = "fail",
+    WIN       = "win",
+    CUTSCENE  = "cutscene",
+}
+
+-- 关卡配置
+M.LEVELS = {
+    { pairs = 3, showTime = 4.0,  label = "第一关 · 入门" },
+    { pairs = 4, showTime = 3.5,  label = "第二关 · 进阶" },
+    { pairs = 5, showTime = 3.0,  label = "第三关 · 挑战" },
+    { pairs = 5, showTime = 2.0,  label = "第四关 · 极速" },
+    { pairs = 6, showTime = 1.5,  label = "第五关 · 大师" },
+}
+
+-- 听筒颜色池（扩展支持无尽模式）
+M.COLORS = {
+    { name = "绿色",   base = {120, 140, 40, 255},  dark = {80, 100, 20, 255} },
+    { name = "红色",   base = {180, 60,  60, 255},  dark = {140, 35, 35, 255} },
+    { name = "橙色",   base = {220, 145, 35, 255},  dark = {180, 105, 15, 255} },
+    { name = "蓝色",   base = {50,  100, 200, 255}, dark = {30, 70, 160, 255} },
+    { name = "紫色",   base = {140, 60,  180, 255}, dark = {100, 30, 140, 255} },
+    { name = "青色",   base = {30,  170, 180, 255}, dark = {10, 130, 140, 255} },
+    { name = "粉色",   base = {220, 100, 140, 255}, dark = {180, 60, 100, 255} },
+    { name = "黄色",   base = {210, 190, 30, 255},  dark = {170, 150, 10, 255} },
+    { name = "棕色",   base = {150, 90,  50, 255},  dark = {110, 60, 25, 255} },
+    { name = "灰蓝",   base = {90,  130, 160, 255}, dark = {55, 95, 125, 255} },
+    { name = "深绿",   base = {40,  120, 70, 255},  dark = {15, 85, 40, 255} },
+    { name = "酒红",   base = {160, 40,  80, 255},  dark = {120, 15, 50, 255} },
+    { name = "天蓝",   base = {80,  170, 230, 255}, dark = {45, 130, 190, 255} },
+    { name = "橄榄",   base = {130, 130, 50, 255},  dark = {95, 95, 20, 255} },
+    { name = "珊瑚",   base = {230, 120, 90, 255},  dark = {190, 80, 55, 255} },
+    { name = "薄荷",   base = {60,  190, 140, 255}, dark = {25, 150, 100, 255} },
+}
+
+-- 听筒组件尺寸
+M.PHONE_SQUARE_SIZE = 100
+M.PHONE_EARPIECE_SIZE = 120
+M.PHONE_DOT_SIZE = 36
+M.PHONE_MARGIN_EDGE = 20
+M.PHONE_LINE_GAP = 35
+M.HAND_SIZE = 120
+
+-- 暗红/褐红背景色
+M.BG_COLOR = { 100, 42, 38, 255 }
+
+-- 绳索物理参数
+M.ROPE_SEG_COUNT = 12
+M.ROPE_GRAVITY = 600
+M.ROPE_ITERATIONS = 8
+M.ROPE_DAMPING = 0.97
+
+-- 电话铃声时间
+M.PHONE_RING_DURATION = 4.0
+M.PHONE_RING_PAUSE = 3.0
+
+-- 失败对话间隔
+M.FAIL_LINE_INTERVAL = 0.8
+
+-- BGM 曲目
+M.BGM_TRACKS = {
+    normal     = "audio/sfx/normal.ogg",
+    stressed   = "audio/sfx/Stressed.ogg",
+    sostressed = "audio/sfx/SOstressed.ogg",
+}
+
+--- 无尽模式：动态生成第6关及以后的关卡配置
+function M.GetLevelConfig(levelNum)
+    if levelNum <= #M.LEVELS then
+        return M.LEVELS[levelNum]
+    end
+    local extraLevels = levelNum - #M.LEVELS
+    local pairs = math.min(6 + extraLevels, #M.COLORS)
+    local showTime = math.max(0.5, 1.5 - extraLevels * 0.1)
+    local label = string.format("第%d关 · 无尽", levelNum)
+    return { pairs = pairs, showTime = showTime, label = label }
+end
+
+return M
