@@ -1,0 +1,256 @@
+-- ============================================================================
+-- Audio.lua - 音频系统（BGM、音效、电话铃声、蚊子叫声、静音控制）
+-- ============================================================================
+
+local UI = require("引擎库")
+local Config = require "Config"
+local G = require "G"
+
+local M = {}
+
+-- ============================================================================
+-- 蚊子叫声
+-- ============================================================================
+
+function M.PlayMosquitoBuzz()
+    M.StopMosquitoBuzz()
+    if not G.audioScene then return end
+    if not G.mosquitoBuzzSound then
+        G.mosquitoBuzzSound = cache:GetResource("Sound", "audio/sfx/mosquito_buzz.ogg")
+        G.mosquitoBuzzSound.looped = true
+    end
+    G.mosquitoSoundNode = G.audioScene:CreateChild("MosquitoBuzz")
+    G.mosquitoSoundSource = G.mosquitoSoundNode:CreateComponent("SoundSource")
+    G.mosquitoSoundSource:Play(G.mosquitoBuzzSound)
+    G.mosquitoSoundSource.gain = G.gameMuted and 0 or 0.5
+end
+
+function M.EnsureMosquitoBuzz()
+    if not G.audioScene then return end
+    if G.mosquitoSoundSource and G.mosquitoSoundSource:IsPlaying() then return end
+    M.PlayMosquitoBuzz()
+end
+
+function M.StopMosquitoBuzz()
+    if G.mosquitoSoundSource then
+        G.mosquitoSoundSource:Stop()
+        G.mosquitoSoundSource = nil
+    end
+    if G.mosquitoSoundNode then
+        G.mosquitoSoundNode:Remove()
+        G.mosquitoSoundNode = nil
+    end
+end
+
+-- ============================================================================
+-- 背景音乐
+-- ============================================================================
+
+function M.GetBGMTrackForLevel(level)
+    if level <= 2 then
+        return Config.BGM_TRACKS.normal
+    elseif level <= 5 then
+        return Config.BGM_TRACKS.stressed
+    else
+        return Config.BGM_TRACKS.sostressed
+    end
+end
+
+function M.PlayBGM(trackPath)
+    -- 同一首且正在播放，跳过
+    if G.bgmCurrentTrack == trackPath and G.bgmSource then
+        if G.bgmSource:IsPlaying() then return end
+        local snd = G.bgmSoundRes[trackPath]
+        if snd then
+            G.bgmSource:Play(snd)
+            G.bgmSource.gain = G.gameMuted and 0 or 0.35
+            print("[BGM] 恢复播放: " .. trackPath)
+            return
+        end
+    end
+
+    M.StopBGM()
+    if not G.audioScene then return end
+
+    local sound = G.bgmSoundRes[trackPath]
+    if not sound then
+        sound = cache:GetResource("Sound", trackPath)
+        if not sound then
+            print("[BGM] 加载失败: " .. trackPath)
+            return
+        end
+        sound.looped = true
+        G.bgmSoundRes[trackPath] = sound
+    end
+
+    G.bgmNode = G.audioScene:CreateChild("BGM")
+    G.bgmSource = G.bgmNode:CreateComponent("SoundSource")
+    G.bgmSource:Play(sound)
+    G.bgmSource.gain = G.gameMuted and 0 or 0.35
+    G.bgmCurrentTrack = trackPath
+    print("[BGM] 播放: " .. trackPath .. " playing=" .. tostring(G.bgmSource:IsPlaying()))
+end
+
+function M.StopBGM()
+    if G.bgmSource then
+        G.bgmSource:Stop()
+        G.bgmSource = nil
+    end
+    if G.bgmNode then
+        G.bgmNode:Remove()
+        G.bgmNode = nil
+    end
+    G.bgmCurrentTrack = nil
+end
+
+function M.UpdateBGMForLevel(level)
+    local track = M.GetBGMTrackForLevel(level)
+    M.PlayBGM(track)
+end
+
+-- ============================================================================
+-- 静音控制
+-- ============================================================================
+
+function M.SetMuted(muted)
+    G.gameMuted = muted
+    if G.gameMuted then
+        if G.bgmSource then G.bgmSource.gain = 0 end
+        M.PhoneRingStopSound()
+        if G.mosquitoSoundSource then G.mosquitoSoundSource.gain = 0 end
+    else
+        if G.bgmSource then G.bgmSource.gain = 0.35 end
+        if G.mosquitoSoundSource then G.mosquitoSoundSource.gain = 0.5 end
+    end
+    M.UpdateMuteButton()
+end
+
+function M.ToggleMute()
+    M.SetMuted(not G.gameMuted)
+end
+
+function M.CreateMuteButton()
+    if G.muteButtonWidget then G.muteButtonWidget:Remove() end
+    G.muteButtonWidget = UI.Panel {
+        id = "muteBtn",
+        position = "fixed",
+        right = 10,
+        top = 10,
+        zIndex = 8000,
+        width = 144,
+        height = 144,
+        backgroundImage = "image/icon_speaker.png",
+        backgroundFit = "contain",
+        opacity = G.gameMuted and 0.35 or 1.0,
+        filter = G.gameMuted and "grayscale(100%)" or "none",
+        onClick = function(self)
+            M.ToggleMute()
+        end,
+    }
+    G.uiRoot:AddChild(G.muteButtonWidget)
+end
+
+function M.UpdateMuteButton()
+    if G.muteButtonWidget then
+        G.muteButtonWidget:SetStyle({
+            opacity = G.gameMuted and 0.35 or 1.0,
+            filter = G.gameMuted and "grayscale(100%)" or "none",
+        })
+    end
+end
+
+-- ============================================================================
+-- 电话铃声
+-- ============================================================================
+
+function M.StartPhoneRing()
+    if G.phoneRingPlaying then return end
+    G.phoneRingPlaying = true
+    G.phoneRingRinging = true
+    G.phoneRingTimer = Config.PHONE_RING_DURATION
+    M.PhoneRingPlaySound()
+end
+
+function M.PhoneRingPlaySound()
+    if not G.audioScene then return end
+    if G.gameMuted then return end
+    M.PhoneRingStopSound()
+
+    local sound = cache:GetResource("Sound", "audio/sfx/phone_ring.ogg")
+    if not sound then
+        print("[PhoneRing] 加载失败")
+        return
+    end
+    sound.looped = true
+
+    G.phoneRingNode = G.audioScene:CreateChild("PhoneRing")
+    G.phoneRingSource = G.phoneRingNode:CreateComponent("SoundSource")
+    G.phoneRingSource:Play(sound)
+    G.phoneRingSource.gain = 0.25
+end
+
+function M.PhoneRingStopSound()
+    if G.phoneRingSource then
+        G.phoneRingSource:Stop()
+        G.phoneRingSource = nil
+    end
+    if G.phoneRingNode then
+        G.phoneRingNode:Remove()
+        G.phoneRingNode = nil
+    end
+end
+
+function M.StopPhoneRing()
+    M.PhoneRingStopSound()
+    G.phoneRingPlaying = false
+    G.phoneRingRinging = false
+    G.phoneRingTimer = 0
+end
+
+function M.UpdatePhoneRing(dt)
+    if not G.phoneRingPlaying then return end
+
+    G.phoneRingTimer = G.phoneRingTimer - dt
+    if G.phoneRingTimer <= 0 then
+        if G.phoneRingRinging then
+            M.PhoneRingStopSound()
+            G.phoneRingRinging = false
+            G.phoneRingTimer = Config.PHONE_RING_PAUSE
+        else
+            M.PhoneRingPlaySound()
+            G.phoneRingRinging = true
+            G.phoneRingTimer = Config.PHONE_RING_DURATION
+        end
+    end
+end
+
+-- ============================================================================
+-- BGM 保活（每帧调用）
+-- ============================================================================
+
+function M.KeepBGMAlive()
+    if not G.gameMuted and G.bgmCurrentTrack and G.bgmSource and not G.bgmSource:IsPlaying() then
+        local snd = G.bgmSoundRes[G.bgmCurrentTrack]
+        if snd then
+            G.bgmSource:Play(snd)
+            G.bgmSource.gain = G.gameMuted and 0 or 0.35
+        end
+    end
+end
+
+-- ============================================================================
+-- 胜利音效
+-- ============================================================================
+
+function M.PlayVictorySound()
+    local victorySound = cache:GetResource("Sound", "audio/victory trumpey.ogg")
+    if victorySound and G.audioScene then
+        local sndNode = G.audioScene:CreateChild("VictorySfx")
+        local src = sndNode:CreateComponent("SoundSource")
+        src.gain = G.gameMuted and 0 or 0.8
+        src.autoRemoveMode = REMOVE_COMPONENT
+        src:Play(victorySound)
+    end
+end
+
+return M
