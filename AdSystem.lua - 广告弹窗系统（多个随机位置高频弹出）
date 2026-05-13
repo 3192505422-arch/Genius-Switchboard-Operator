@@ -1,0 +1,151 @@
+-- ============================================================================
+-- AdSystem.lua - 广告弹窗系统（多个随机位置高频弹出）
+-- ============================================================================
+
+local UI = require("引擎库")
+local Config = require "Config"
+local G = require "G"
+
+local M = {}
+
+local PHONE_EARPIECE_SIZE = Config.PHONE_EARPIECE_SIZE
+
+-- ============================================================================
+-- 广告配置
+-- ============================================================================
+
+-- 普通版广告（1-5关）
+local AD_CONFIGS_NORMAL = {
+    { path = "image/ad_fastconnect.png", close = { top = 0, left = 0 },      w = 840, h = 584 },
+    { path = "image/ad_catbridge.png",   close = { top = 0, right = 0 },     w = 400, h = 300 },
+    { path = "image/ad_younow.png",      close = { bottom = 0, right = 0 },  w = 240, h = 410 },
+    { path = "image/ad_taptap.png",      close = { top = 28, left = 32 },    w = 420, h = 280 },
+    { path = "image/ad_letsbrush.png",   close = { top = 0, right = 0 },     w = 420, h = 292 },
+}
+
+-- 恐怖版广告（第6关起逐渐替换）
+local AD_CONFIGS_SCARY = {
+    { path = "image/ad_scary_catbridge.png",   close = { top = 0, left = 0 },      w = 840, h = 584 },
+    { path = "image/ad_scary_fastconnect.png", close = { top = 0, right = 0 },     w = 400, h = 300 },
+    { path = "image/ad_scary_younow.png",      close = { bottom = 0, right = 0 },  w = 240, h = 410 },
+    { path = "image/ad_scary_taptap.png",      close = { top = 28, left = 32 },    w = 420, h = 280 },
+    { path = "image/ad_scary_letsbrush.png",   close = { top = 0, right = 0 },     w = 420, h = 292 },
+}
+
+-- ============================================================================
+-- 广告配置池
+-- ============================================================================
+
+--- 获取当前关卡的广告配置池
+--- 第5关及以前：全部普通广告
+--- 第6关：1/6概率恐怖，第7关：2/6，...第11关起：全部恐怖
+function M.GetAdConfigs()
+    local level = G.game.level or 1
+    if level <= 5 then
+        return AD_CONFIGS_NORMAL
+    end
+    local adCount = #AD_CONFIGS_NORMAL
+    local scaryCount = math.min(level - 5, adCount)
+    local mixed = {}
+    for i = 1, adCount do
+        if i <= scaryCount then
+            mixed[i] = AD_CONFIGS_SCARY[i]
+        else
+            mixed[i] = AD_CONFIGS_NORMAL[i]
+        end
+    end
+    return mixed
+end
+
+-- ============================================================================
+-- 广告生成与关闭
+-- ============================================================================
+
+function M.SpawnAdAtRandomPos()
+    if not G.uiRoot then return end
+    local game = G.game
+    local DragInput = require "DragInput"
+
+    -- 如果正在拖拽，取消拖拽
+    if game.dragging then
+        game.dragging = false
+        game.handGrabbing = false
+        DragInput.UpdateHandAppearance()
+    end
+
+    -- 随机选广告配置
+    local adPool = M.GetAdConfigs()
+    local adCfg = adPool[math.random(1, #adPool)]
+
+    -- 计算屏幕可用范围（基准像素）
+    local screenW = graphics.width / G.uiScale
+    local screenH = graphics.height / G.uiScale
+
+    -- 随机位置（确保不完全超出屏幕）
+    local maxX = math.max(0, screenW - adCfg.w - 10)
+    local maxY = math.max(0, screenH - adCfg.h - 10)
+    local posX = math.random(10, math.max(11, math.floor(maxX)))
+    local posY = math.random(40, math.max(41, math.floor(maxY)))
+
+    -- 为此广告生成唯一索引
+    local adIndex = #G.adWidgets + 1
+
+    -- 根据配置的 close 表设置透明点击区域
+    local closeBtnStyle = {
+        position = "absolute",
+        width = 64,
+        height = 64,
+    }
+    local cl = adCfg.close
+    if cl.top then closeBtnStyle.top = cl.top end
+    if cl.bottom then closeBtnStyle.bottom = cl.bottom end
+    if cl.left then closeBtnStyle.left = cl.left end
+    if cl.right then closeBtnStyle.right = cl.right end
+    closeBtnStyle.onClick = function(self)
+        M.DismissOneAd(adIndex)
+    end
+
+    local adWidget = UI.Panel {
+        position = "fixed",
+        left = posX,
+        top = posY,
+        width = adCfg.w,
+        height = adCfg.h,
+        zIndex = 900 + adIndex,
+        pointerEvents = "box-none",
+        backgroundImage = adCfg.path,
+        backgroundFit = "contain",
+        children = {
+            UI.Panel(closeBtnStyle),
+        },
+    }
+
+    G.adWidgets[adIndex] = adWidget
+    game.adCount = game.adCount + 1
+    game.adSpawned = game.adSpawned + 1
+
+    -- 插入到手和蚊子之前，保持蚊子在最顶层
+    local hand = G.handWidget
+    if hand then hand:Remove() end
+    local mq = G.mosquitoWidget
+    if mq then mq:Remove() end
+    G.uiRoot:AddChild(adWidget)
+    if hand then G.uiRoot:AddChild(hand) end
+    if mq then G.uiRoot:AddChild(mq) end
+
+    print(string.format("=== 广告弹出 #%d (%s) 位置(%d,%d) 当前%d个 ===",
+        adIndex, adCfg.path, posX, posY, game.adCount))
+end
+
+function M.DismissOneAd(index)
+    local w = G.adWidgets[index]
+    if w then
+        w:Remove()
+        G.adWidgets[index] = nil
+        G.game.adCount = G.game.adCount - 1
+        if G.game.adCount < 0 then G.game.adCount = 0 end
+        print(string.format("=== 广告 #%d 关闭，剩余 %d 个 ===", index, G.game.adCount))
+    end
+end
+
+return M
