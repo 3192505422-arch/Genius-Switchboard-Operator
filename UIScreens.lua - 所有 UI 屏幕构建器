@@ -1,0 +1,763 @@
+-- ============================================================================
+-- UIScreens.lua - 所有 UI 屏幕构建器
+-- ============================================================================
+
+local UI = require("引擎库")
+local Config = require "Config"
+local G = require "G"
+local Dialogue = require "Dialogue"
+
+local M = {}
+
+local STATE  = Config.STATE
+local COLORS = Config.COLORS
+local PHONE_SQUARE_SIZE   = Config.PHONE_SQUARE_SIZE
+local PHONE_EARPIECE_SIZE = Config.PHONE_EARPIECE_SIZE
+
+-- 内部辅助：连接检查（避免 require DragInput 循环依赖）
+local function isLeftConnected(leftIdx)
+    for _, pc in ipairs(G.game.playerConnections) do
+        if pc.leftIdx == leftIdx then return true end
+    end
+    return false
+end
+
+local function isRightConnected(rightIdx)
+    for _, pc in ipairs(G.game.playerConnections) do
+        if pc.rightIdx == rightIdx then return true end
+    end
+    return false
+end
+
+-- ============================================================================
+-- 菜单界面
+-- ============================================================================
+
+function M.CreateMenuScreen()
+    local game = G.game
+    local dpr = graphics:GetDPR()
+    local scrH = graphics:GetHeight() / dpr
+
+    local children = {}
+
+    -- 左侧角色头顶的鸟
+    children[#children + 1] = UI.Panel {
+        position = "absolute",
+        left = "6%",
+        bottom = "66%",
+        width = "20%", height = "20%",
+        backgroundImage = "image/menu_bird.png",
+        backgroundFit = "contain",
+        pointerEvents = "box-none",
+        zIndex = 6,
+    }
+
+    -- 左侧角色（老板）
+    children[#children + 1] = UI.Panel {
+        position = "absolute",
+        left = "0%",
+        bottom = "0%",
+        width = "36%", height = "72%",
+        backgroundImage = "image/menu_char_left.png",
+        backgroundFit = "contain",
+        backgroundPosition = "left bottom",
+        pointerEvents = "box-none",
+        zIndex = 5,
+    }
+
+    -- 右侧角色（耳朵）
+    children[#children + 1] = UI.Panel {
+        position = "absolute",
+        right = "0%",
+        bottom = "0%",
+        width = "36%", height = "72%",
+        backgroundImage = "image/menu_char_right.png",
+        backgroundFit = "contain",
+        backgroundPosition = "right bottom",
+        pointerEvents = "box-none",
+        zIndex = 5,
+    }
+
+    -- 简历卡片
+    if not game.menuAutoSlide or game.menuResumeOffsetY < scrH then
+        children[#children + 1] = UI.Panel {
+            position = "absolute",
+            left = "8%",
+            top = math.floor(-game.menuResumeOffsetY),
+            width = "84%", height = "112%",
+            marginTop = "3%",
+            backgroundImage = "image/opening_resume.png",
+            backgroundFit = "contain",
+            zIndex = 10,
+        }
+    end
+
+    return UI.Panel {
+        width = "100%", height = "100%",
+        backgroundImage = "image/opening_bg.png",
+        backgroundSize = "cover",
+        pointerEvents = "box-none",
+        children = children,
+    }
+end
+
+-- ============================================================================
+-- 海报页
+-- ============================================================================
+
+function M.CreateApplyScreen()
+    return UI.Panel {
+        width = "100%", height = "100%",
+        backgroundImage = "image/opening_poster.png",
+        backgroundSize = "cover",
+    }
+end
+
+-- ============================================================================
+-- 开场介绍
+-- ============================================================================
+
+function M.CreateIntroScreen()
+    local game = G.game
+    local page = Dialogue.INTRO_PAGES[game.introPage]
+    local isLast = (game.introPage >= #Dialogue.INTRO_PAGES)
+    local hintText = isLast and "点击进入关卡" or "点击继续..."
+
+    return UI.Panel {
+        width = "100%", height = "100%",
+        backgroundColor = { 0, 0, 0, 0 },
+        flexDirection = "row",
+        justifyContent = "center",
+        alignItems = "center",
+        onClick = function(self)
+            if game.introPage < #Dialogue.INTRO_PAGES then
+                game.introPage = game.introPage + 1
+                if G.RebuildGameUI then G.RebuildGameUI() end
+            else
+                game.introPage = 1
+                if G.InitLevel then G.InitLevel(1) end
+            end
+        end,
+        children = {
+            -- 左侧：角色图片
+            UI.Panel {
+                width = "45%", height = "85%",
+                justifyContent = "flex-end",
+                alignItems = "center",
+                children = {
+                    UI.Panel {
+                        width = "90%", height = "95%",
+                        backgroundImage = page.image,
+                        backgroundFit = "contain",
+                    },
+                },
+            },
+            -- 右侧：对话气泡
+            UI.Panel {
+                width = "45%", height = "85%",
+                justifyContent = "center",
+                alignItems = "flex-start",
+                paddingLeft = 10,
+                children = {
+                    UI.Panel {
+                        width = "100%",
+                        padding = 24,
+                        gap = 14,
+                        children = {
+                            UI.Panel {
+                                position = "absolute",
+                                left = -200, top = -30, right = -30, bottom = -40,
+                                backgroundImage = "image/dialog_bubble.png",
+                                backgroundSize = "stretch",
+                                pointerEvents = "box-none",
+                            },
+                            UI.Label {
+                                text = page.text,
+                                fontSize = 18,
+                                fontColor = { 60, 30, 25, 255 },
+                                whiteSpace = "normal",
+                                lineHeight = 1.6,
+                            },
+                            UI.Panel {
+                                width = "100%", height = 1,
+                                backgroundColor = { 180, 140, 120, 80 },
+                                marginTop = 4, marginBottom = 4,
+                            },
+                            UI.Label {
+                                text = hintText,
+                                fontSize = 14,
+                                fontColor = { 200, 180, 170, 200 },
+                            },
+                        },
+                    },
+                },
+            },
+        }
+    }
+end
+
+-- ============================================================================
+-- 中场剧情
+-- ============================================================================
+
+function M.CreateCutsceneScreen()
+    local game = G.game
+    local pages = (game.cutsceneSet == 2) and Dialogue.CUTSCENE2_PAGES or Dialogue.CUTSCENE_PAGES
+    local page = pages[game.cutscenePage]
+    local isLast = (game.cutscenePage >= #pages)
+    local hintText = isLast and "点击进入关卡" or "点击继续..."
+    local nextLevel = (game.cutsceneSet == 2) and 5 or 3
+
+    return UI.Panel {
+        width = "100%", height = "100%",
+        backgroundColor = { 0, 0, 0, 0 },
+        flexDirection = "row",
+        justifyContent = "center",
+        alignItems = "center",
+        onClick = function(self)
+            if game.cutscenePage < #pages then
+                game.cutscenePage = game.cutscenePage + 1
+                if G.RebuildGameUI then G.RebuildGameUI() end
+            else
+                game.cutscenePage = 1
+                if G.InitLevel then G.InitLevel(nextLevel) end
+            end
+        end,
+        children = {
+            UI.Panel {
+                width = "45%", height = "85%",
+                justifyContent = "flex-end",
+                alignItems = "center",
+                children = {
+                    UI.Panel {
+                        width = "90%", height = "95%",
+                        backgroundImage = page.image,
+                        backgroundFit = "contain",
+                    },
+                },
+            },
+            UI.Panel {
+                width = "45%", height = "85%",
+                justifyContent = "center",
+                alignItems = "flex-start",
+                paddingLeft = 10,
+                children = {
+                    UI.Panel {
+                        width = "100%",
+                        padding = 24,
+                        gap = 14,
+                        children = {
+                            UI.Panel {
+                                position = "absolute",
+                                left = -200, top = -30, right = -30, bottom = -40,
+                                backgroundImage = "image/dialog_bubble.png",
+                                backgroundSize = "stretch",
+                                pointerEvents = "box-none",
+                            },
+                            UI.Label {
+                                text = page.text,
+                                fontSize = 18,
+                                fontColor = { 60, 30, 25, 255 },
+                                whiteSpace = "normal",
+                                lineHeight = 1.6,
+                            },
+                            UI.Panel {
+                                width = "100%", height = 1,
+                                backgroundColor = { 180, 140, 120, 80 },
+                                marginTop = 4, marginBottom = 4,
+                            },
+                            UI.Label {
+                                text = hintText,
+                                fontSize = 14,
+                                fontColor = { 200, 180, 170, 200 },
+                            },
+                        },
+                    },
+                },
+            },
+        }
+    }
+end
+
+-- ============================================================================
+-- 游戏界面
+-- ============================================================================
+
+function M.CreateGameScreen(showingLines)
+    local game = G.game
+    local cfg = Config.GetLevelConfig(game.level)
+
+    return UI.Panel {
+        width = "100%", height = "100%",
+        justifyContent = "space-between",
+        alignItems = "stretch",
+        children = {
+            UI.Panel {
+                paddingHorizontal = 12,
+                paddingVertical = 6,
+                margin = 10,
+                borderRadius = 8,
+                backgroundColor = { 0, 0, 0, 150 },
+                alignSelf = "flex-start",
+                children = {
+                    UI.Label {
+                        text = string.format("第 %d 关", game.level),
+                        fontSize = 18,
+                        fontColor = { 255, 255, 255, 240 },
+                    },
+                },
+            },
+            UI.Panel { width = 0, height = 0 },
+        }
+    }
+end
+
+-- ============================================================================
+-- 连线指示区
+-- ============================================================================
+
+function M.CreateConnectionArea(showLines)
+    local game = G.game
+    local items = {}
+
+    if showLines and game.state == STATE.SHOWING then
+        for i = 1, #game.connections do
+            local conn = game.connections[i]
+            local color = COLORS[conn.colorIdx]
+            items[#items + 1] = UI.Panel {
+                width = "100%",
+                flexDirection = "row",
+                alignItems = "center",
+                justifyContent = "center",
+                gap = 4,
+                children = {
+                    UI.Panel { width = 14, height = 14, backgroundColor = color.base, borderRadius = 3, borderWidth = 1, borderColor = color.dark },
+                    UI.Panel { width = 40, height = 3, backgroundColor = color.base, borderRadius = 1 },
+                    UI.Panel { width = 14, height = 14, backgroundColor = color.base, borderRadius = 3, borderWidth = 1, borderColor = color.dark },
+                },
+            }
+        end
+    elseif game.state == STATE.PLAYING or game.state == STATE.COUNTDOWN then
+        for _, pc in ipairs(game.playerConnections) do
+            local leftColor = COLORS[game.leftPhones[pc.leftIdx].colorIdx]
+            items[#items + 1] = UI.Panel {
+                width = "100%",
+                flexDirection = "row",
+                alignItems = "center",
+                justifyContent = "center",
+                gap = 4,
+                children = {
+                    UI.Panel { width = 14, height = 14, backgroundColor = leftColor.base, borderRadius = 3, borderWidth = 1, borderColor = leftColor.dark },
+                    UI.Panel { width = 40, height = 3, backgroundColor = { 80, 200, 100, 220 }, borderRadius = 1 },
+                    UI.Panel { width = 14, height = 14, backgroundColor = leftColor.base, borderRadius = 3, borderWidth = 1, borderColor = leftColor.dark },
+                },
+            }
+        end
+
+        local remaining = game.totalPairs - #game.playerConnections
+        for _ = 1, remaining do
+            items[#items + 1] = UI.Panel {
+                width = "100%",
+                flexDirection = "row",
+                alignItems = "center",
+                justifyContent = "center",
+                gap = 4,
+                children = {
+                    UI.Panel { width = 14, height = 14, backgroundColor = { 200, 195, 190, 150 }, borderRadius = 3 },
+                    UI.Panel { width = 40, height = 2, backgroundColor = { 200, 195, 190, 100 }, borderRadius = 1 },
+                    UI.Panel { width = 14, height = 14, backgroundColor = { 200, 195, 190, 150 }, borderRadius = 3 },
+                },
+            }
+        end
+    end
+
+    return UI.Panel {
+        flexGrow = 1,
+        gap = 12,
+        alignItems = "center",
+        justifyContent = "center",
+        pointerEvents = "none",
+        children = items,
+    }
+end
+
+-- ============================================================================
+-- 失败对话界面
+-- ============================================================================
+
+function M.CreateFailScreen()
+    local game = G.game
+    local dialogue = game.failDialogue or Dialogue.FAIL_DIALOGUES[1]
+
+    local lineChildren = {}
+    local maxVisible = 5
+    local showEnd = math.min(game.failLineCount, #dialogue)
+    local showStart = math.max(1, showEnd - maxVisible + 1)
+    for i = showStart, showEnd do
+        local line = dialogue[i]
+        local bubbleImg = "image/dialog_green.png"
+        local fontClr = { 50, 30, 25, 255 }
+
+        if line.side == "right" then
+            bubbleImg = "image/dialog_orange.png"
+        elseif line.side == "center" then
+            bubbleImg = nil
+            fontClr = { 100, 80, 70, 255 }
+        end
+
+        local bubbleChildren = {}
+        if bubbleImg then
+            bubbleChildren[#bubbleChildren + 1] = UI.Panel {
+                position = "absolute",
+                left = -30, top = -8, right = -8, bottom = -8,
+                backgroundImage = bubbleImg,
+                backgroundSize = "stretch",
+                pointerEvents = "box-none",
+            }
+        end
+        bubbleChildren[#bubbleChildren + 1] = UI.Label {
+            text = line.text,
+            fontSize = 15,
+            fontColor = fontClr,
+            width = "100%",
+            whiteSpace = "normal",
+        }
+
+        lineChildren[#lineChildren + 1] = UI.Panel {
+            width = "100%",
+            flexDirection = "row",
+            justifyContent = (line.side == "center") and "center"
+                or (line.side == "right") and "flex-end"
+                or "flex-start",
+            children = {
+                UI.Panel {
+                    width = "70%",
+                    paddingHorizontal = 20,
+                    paddingVertical = bubbleImg and 14 or 6,
+                    children = bubbleChildren,
+                },
+            },
+        }
+    end
+
+    -- 角色图片阶段
+    if game.failShowImage then
+        return UI.Panel {
+            width = "100%", height = "100%",
+            backgroundColor = { 0, 0, 0, 0 },
+            flexDirection = "row",
+            justifyContent = "center",
+            alignItems = "center",
+            children = {
+                UI.Panel {
+                    width = "45%", height = "85%",
+                    justifyContent = "flex-end",
+                    alignItems = "center",
+                    children = {
+                        UI.Panel {
+                            width = "90%", height = "95%",
+                            backgroundImage = "image/char_angry.png",
+                            backgroundFit = "contain",
+                        },
+                    },
+                },
+                UI.Panel {
+                    width = "45%", height = "85%",
+                    justifyContent = "center",
+                    alignItems = "flex-start",
+                    paddingLeft = 10,
+                    children = {
+                        UI.Panel {
+                            width = "90%",
+                            maxWidth = 360,
+                            padding = 24,
+                            backgroundColor = { 255, 255, 255, 220 },
+                            borderRadius = 18,
+                            borderWidth = 2,
+                            borderColor = { 220, 80, 80, 200 },
+                            gap = 14,
+                            children = {
+                                UI.Panel {
+                                    position = "absolute",
+                                    left = -10, top = "40%",
+                                    width = 20, height = 20,
+                                    backgroundColor = { 255, 255, 255, 220 },
+                                    borderRadius = 3,
+                                    transform = { rotate = 45 },
+                                },
+                                UI.Label {
+                                    text = "扣工资！！！",
+                                    fontSize = 28,
+                                    fontColor = { 200, 40, 40, 255 },
+                                    textAlign = "center",
+                                },
+                                UI.Panel {
+                                    width = "100%", height = 1,
+                                    backgroundColor = { 200, 80, 80, 100 },
+                                    marginTop = 4, marginBottom = 4,
+                                },
+                                UI.Panel {
+                                    width = "100%",
+                                    gap = 10,
+                                    alignItems = "center",
+                                    children = {
+                                        UI.Button {
+                                            text = "重试本关",
+                                            variant = "primary",
+                                            width = 140,
+                                            onClick = function(self)
+                                                if game.level >= 5 then
+                                                    game.showResignButtons = true
+                                                    if G.RebuildGameUI then G.RebuildGameUI() end
+                                                else
+                                                    if G.InitLevel then G.InitLevel(game.level) end
+                                                end
+                                            end,
+                                        },
+                                        UI.Button {
+                                            text = "返回菜单",
+                                            variant = "secondary",
+                                            width = 120,
+                                            onClick = function(self)
+                                                local Audio = require "Audio"
+                                                Audio.StopBGM()
+                                                game.state = STATE.MENU
+                                                game.menuResumeOffsetY = 0
+                                                game.menuSwipeStartY = nil
+                                                game.menuAutoSlide = false
+                                                game.level = 1
+                                                if G.RebuildGameUI then G.RebuildGameUI() end
+                                            end,
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        }
+    end
+
+    -- 对话进行中
+    local headerChildren = {
+        UI.Panel {
+            width = "100%",
+            alignItems = "center",
+            marginBottom = 6,
+            children = {
+                UI.Label {
+                    text = "偷听到的电话内容...",
+                    fontSize = 13,
+                    fontColor = { 200, 160, 140, 180 },
+                },
+            },
+        },
+    }
+    for _, child in ipairs(lineChildren) do
+        headerChildren[#headerChildren + 1] = child
+    end
+
+    return UI.Panel {
+        width = "100%", height = "100%",
+        backgroundColor = { 0, 0, 0, 0 },
+        justifyContent = "center",
+        alignItems = "center",
+        children = {
+            UI.Panel {
+                width = "85%", maxWidth = 420,
+                minHeight = 120,
+                padding = 20,
+                gap = 10,
+                backgroundColor = { 40, 20, 18, 220 },
+                borderRadius = 16,
+                borderWidth = 2,
+                borderColor = { 140, 80, 60, 150 },
+                children = headerChildren,
+            },
+        },
+    }
+end
+
+-- ============================================================================
+-- 答案揭示
+-- ============================================================================
+
+function M.CreateAnswerReveal()
+    local game = G.game
+    local items = {}
+    for i = 1, #game.connections do
+        local conn = game.connections[i]
+        local leftColor = COLORS[game.leftPhones[conn.leftIdx].colorIdx]
+        local rightColor = COLORS[game.rightPhones[conn.rightIdx].colorIdx]
+        items[#items + 1] = UI.Panel {
+            flexDirection = "row",
+            alignItems = "center",
+            gap = 6,
+            children = {
+                UI.Panel { width = 16, height = 16, backgroundColor = leftColor.base, borderRadius = 3 },
+                UI.Label { text = leftColor.name, fontSize = 11, fontColor = leftColor.base },
+                UI.Label { text = " \u{2194} ", fontSize = 11, fontColor = { 220, 200, 180, 180 } },
+                UI.Label { text = rightColor.name, fontSize = 11, fontColor = rightColor.base },
+                UI.Panel { width = 16, height = 16, backgroundColor = rightColor.base, borderRadius = 3 },
+            }
+        }
+    end
+
+    local answerChildren = {
+        UI.Label {
+            text = "正确答案:",
+            fontSize = 13,
+            fontColor = { 255, 220, 120, 230 },
+            marginBottom = 4,
+        },
+    }
+    for _, item in ipairs(items) do
+        answerChildren[#answerChildren + 1] = item
+    end
+
+    return UI.Panel {
+        width = "85%",
+        maxWidth = 340,
+        padding = 14,
+        gap = 8,
+        backgroundColor = { 60, 28, 25, 220 },
+        borderRadius = 10,
+        borderWidth = 1,
+        borderColor = { 140, 80, 60, 150 },
+        alignItems = "center",
+        children = answerChildren,
+    }
+end
+
+-- ============================================================================
+-- 结果界面
+-- ============================================================================
+
+function M.CreateResultScreen(success)
+    local game = G.game
+    local cfg = Config.GetLevelConfig(game.level)
+
+    return UI.Panel {
+        width = "100%", height = "100%",
+        justifyContent = "center",
+        alignItems = "center",
+        gap = 16,
+        children = {
+            UI.Label {
+                text = success and "\u{2714} 通关!" or "\u{2716} 连线错误!",
+                fontSize = 28,
+                fontColor = success and { 80, 220, 100, 255 } or { 255, 80, 80, 255 },
+            },
+            UI.Label {
+                text = cfg.label,
+                fontSize = 16,
+                fontColor = { 200, 180, 160, 220 },
+            },
+            UI.Label {
+                text = string.format("正确连接: %d / %d", game.correctCount, game.totalPairs),
+                fontSize = 14,
+                fontColor = { 220, 200, 180, 200 },
+            },
+
+            success and nil or M.CreateAnswerReveal(),
+
+            UI.Panel {
+                flexDirection = "row",
+                gap = 12,
+                marginTop = 10,
+                children = {
+                    UI.Button {
+                        text = success and "下一关" or "重试本关",
+                        variant = "primary",
+                        width = 140,
+                        onClick = function(self)
+                            if success then
+                                if game.level == 2 then
+                                    game.cutscenePage = 1
+                                    game.cutsceneSet = 1
+                                    game.state = STATE.CUTSCENE
+                                    if G.RebuildGameUI then G.RebuildGameUI() end
+                                elseif game.level == 4 then
+                                    game.cutscenePage = 1
+                                    game.cutsceneSet = 2
+                                    game.state = STATE.CUTSCENE
+                                    if G.RebuildGameUI then G.RebuildGameUI() end
+                                elseif game.level >= 5 then
+                                    game.showResignButtons = true
+                                    if G.RebuildGameUI then G.RebuildGameUI() end
+                                else
+                                    if G.InitLevel then G.InitLevel(game.level + 1) end
+                                end
+                            else
+                                if G.InitLevel then G.InitLevel(game.level) end
+                            end
+                        end,
+                    },
+                    UI.Button {
+                        text = "返回菜单",
+                        variant = "secondary",
+                        width = 120,
+                        onClick = function(self)
+                            local Audio = require "Audio"
+                            Audio.StopBGM()
+                            game.state = STATE.MENU
+                            game.menuResumeOffsetY = 0
+                            game.menuSwipeStartY = nil
+                            game.menuAutoSlide = false
+                            game.level = 1
+                            if G.RebuildGameUI then G.RebuildGameUI() end
+                        end,
+                    },
+                },
+            },
+        }
+    }
+end
+
+-- ============================================================================
+-- 全部通关
+-- ============================================================================
+
+function M.CreateWinScreen()
+    local game = G.game
+
+    return UI.Panel {
+        width = "100%", height = "100%",
+        justifyContent = "center",
+        alignItems = "center",
+        gap = 16,
+        children = {
+            UI.Label { text = "\u{1F3C6}", fontSize = 48 },
+            UI.Label { text = "恭喜通关!", fontSize = 32, fontColor = { 255, 220, 80, 255 } },
+            UI.Label { text = "你已完成全部五关挑战", fontSize = 16, fontColor = { 200, 180, 160, 220 } },
+            UI.Label { text = "你是真正的接线大师!", fontSize = 14, fontColor = { 220, 200, 180, 200 } },
+            UI.Button {
+                text = "再来一次",
+                variant = "primary",
+                width = 160,
+                marginTop = 16,
+                onClick = function(self)
+                    if G.InitLevel then G.InitLevel(1) end
+                end,
+            },
+            UI.Button {
+                text = "返回菜单",
+                variant = "secondary",
+                width = 140,
+                onClick = function(self)
+                    local Audio = require "Audio"
+                    Audio.StopBGM()
+                    game.state = STATE.MENU
+                    game.menuResumeOffsetY = 0
+                    game.menuSwipeStartY = nil
+                    game.menuAutoSlide = false
+                    game.level = 1
+                    if G.RebuildGameUI then G.RebuildGameUI() end
+                end,
+            },
+        }
+    }
+end
+
+return M
