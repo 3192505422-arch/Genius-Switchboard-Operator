@@ -1,0 +1,59 @@
+-- ============================================================================
+-- Confetti.lua - 彩纸粒子系统
+-- ============================================================================
+
+local M = {}
+
+local COLORS = {
+    { 255, 80, 80 }, { 255, 200, 50 }, { 80, 200, 255 },
+    { 100, 255, 100 }, { 255, 120, 220 }, { 255, 160, 50 },
+    { 180, 100, 255 }, { 50, 255, 200 },
+}
+
+function M.Spawn(screenW, screenH)
+    local particles = {}
+    for i = 1, 80 do
+        local c = COLORS[math.random(1, #COLORS)]
+        particles[i] = {
+            x = math.random() * screenW,
+            y = screenH + math.random() * 100,
+            vx = (math.random() - 0.5) * 300,
+            vy = -(700 + math.random() * 800),
+            rot = math.random() * 360,
+            rotV = (math.random() - 0.5) * 600,
+            w = 6 + math.random() * 8,
+            h = 4 + math.random() * 6,
+            r = c[1], g = c[2], b = c[3],
+            gravity = 400 + math.random() * 200,
+            drag = 0.99,
+        }
+    end
+    return particles
+end
+
+function M.Update(confetti, dt)
+    for _, p in ipairs(confetti) do
+        p.vy = p.vy + p.gravity * dt
+        p.vx = p.vx * p.drag
+        p.x = p.x + p.vx * dt
+        p.y = p.y + p.vy * dt
+        p.rot = p.rot + p.rotV * dt
+    end
+end
+
+function M.Draw(vgCtx, confetti, logW, logH)
+    for _, p in ipairs(confetti) do
+        if p.y > -50 and p.y < logH + 50 and p.x > -50 and p.x < logW + 50 then
+            nvgSave(vgCtx)
+            nvgTranslate(vgCtx, p.x, p.y)
+            nvgRotate(vgCtx, math.rad(p.rot))
+            nvgBeginPath(vgCtx)
+            nvgRoundedRect(vgCtx, -p.w / 2, -p.h / 2, p.w, p.h, 1.5)
+            nvgFillColor(vgCtx, nvgRGBA(p.r, p.g, p.b, 220))
+            nvgFill(vgCtx)
+            nvgRestore(vgCtx)
+        end
+    end
+end
+
+return M
