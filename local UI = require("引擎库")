@@ -1,0 +1,1005 @@
+-- ============================================================================
+-- 接线员记忆连线游戏 (Telephone Operator Memory Game)
+-- 入口调度器 — 所有逻辑拆分至独立模块
+-- ============================================================================
+
+local UI = require("引擎库")
+
+-- ============================================================================
+-- 模块加载
+-- ============================================================================
+local Config      = require "Config"
+local G           = require "G"
+local Audio       = require "Audio"
+local RopePhysics = require "RopePhysics"
+local Confetti    = require "Confetti"
+local PhoneLayout = require "PhoneLayout"
+local PhoneWidget = require "PhoneWidget"
+local DragInput   = require "DragInput"
+local NanoVGRender = require "NanoVGRender"
+local AdSystem    = require "AdSystem"
+local UIScreens   = require "UIScreens"
+
+-- ============================================================================
+-- 常量别名
+-- ============================================================================
+local STATE               = Config.STATE
+local COLORS              = Config.COLORS
+local HAND_SIZE           = Config.HAND_SIZE
+local PHONE_SQUARE_SIZE   = Config.PHONE_SQUARE_SIZE
+local PHONE_EARPIECE_SIZE = Config.PHONE_EARPIECE_SIZE
+local FAIL_LINE_INTERVAL  = Config.FAIL_LINE_INTERVAL
+
+-- ============================================================================
+-- 前向声明（InitLevel 与 RebuildGameUI 相互引用）
+-- ============================================================================
+local InitLevel
+local RebuildGameUI
+local InitUI
+local CreateUI
+local SubscribeToEvents
+
+-- ============================================================================
+-- 生命周期 — Start
+-- ============================================================================
+
+function Start()
+    graphics.windowTitle = Config.Title
+    input.mouseMode = MM_FREE
+    ui.cursor = nil
+
+    -- 创建音频场景
+    G.audioScene = Scene()
+    G.audioScene:CreateComponent("Octree")
+
+    -- 创建 NanoVG 上下文
+    G.vg = nvgCreate(1)
+    if G.vg then
+        print("NanoVG 上下文创建成功")
+        local vg = G.vg
+
+        -- 角色图片
+        G.charImage = nvgCreateImage(vg, "image/character.png", 0)
+        if G.charImage and G.charImage > 0 then
+            print("角色图片加载成功: " .. G.charImage)
+        else
+            print("警告: 角色图片加载失败")
+            G.charImage = nil
+        end
+
+        -- 背景图片
+        G.bgImage = nvgCreateImage(vg, "image/bg_phoneco.png", 0)
+        if G.bgImage and G.bgImage > 0 then
+            print("背景图片加载成功: " .. G.bgImage)
+        else
+            print("警告: 背景图片加载失败")
+            G.bgImage = nil
+        end
+
+        SubscribeToEvent(vg, "NanoVGRender", "HandleNanoVGRender")
+
+        -- 浮雕倒计时字体
+        G.embossFontId = nvgCreateFont(vg, "sans", "Fonts/MiSans-Regular.ttf")
+        print("浮雕字体ID: " .. tostring(G.embossFontId))
+
+        -- 数字图片 0-9（琥珀色）
+        for i = 0, 9 do
+            local img = nvgCreateImage(vg, string.format("image/seg_digit_%d.png", i), 0)
+            if img and img > 0 then
+                G.digitImages[i] = img
+                print("数字图片 " .. i .. " 加载成功: " .. img)
+            else
+                print("警告: 数字图片 " .. i .. " 加载失败")
+            end
+        end
+
+        -- 冒号图片
+        local cImg = nvgCreateImage(vg, "image/digit_colon_20260509172055.png", 0)
+        if cImg and cImg > 0 then
+            G.colonImage = cImg
+            print("冒号图片加载成功: " .. cImg)
+        else
+            print("警告: 冒号图片加载失败")
+        end
+
+        -- 红色数字图片 0-9
+        for i = 0, 9 do
+            local img = nvgCreateImage(vg, string.format("image/seg_digit_red_%d.png", i), 0)
+            if img and img > 0 then
+                G.redDigitImages[i] = img
+            end
+        end
+
+        -- 顶部装置图片
+        local tdImg = nvgCreateImage(vg, "image/top_device.png", 0)
+        if tdImg and tdImg > 0 then
+            G.topDeviceImage = tdImg
+            print("顶部装置图片加载成功: " .. tdImg)
+        else
+            print("警告: 顶部装置图片加载失败")
+        end
+    else
+        print("警告: NanoVG 上下文创建失败")
+    end
+
+    -- 注册回调（打破循环依赖）
+    G.InitLevel = InitLevel
+    G.RebuildGameUI = RebuildGameUI
+
+    InitUI()
+    CreateUI()
+    SubscribeToEvents()
+    print("=== 接线员记忆连线游戏启动 ===")
+end
+
+-- ============================================================================
+-- 生命周期 — Stop
+-- ============================================================================
+
+function Stop()
+    input.mouseMode = MM_ABSOLUTE
+    Audio.StopPhoneRing()
+    Audio.StopBGM()
+    if G.vg then
+        nvgDelete(G.vg)
+        G.vg = nil
+    end
+    UI.Shutdown()
+end
+
+-- ============================================================================
+-- NanoVG 渲染（全局包装器）
+-- ============================================================================
+
+function HandleNanoVGRender(eventType, eventData)
+    NanoVGRender.HandleNanoVGRender(eventType, eventData)
+end
+
+-- ============================================================================
+-- UI 初始化
+-- ============================================================================
+
+InitUI = function()
+    UI.Init({
+        fonts = {
+            { family = "sans", weights = {
+                normal = "Fonts/MiSans-Regular.ttf",
+            } }
+        },
+        scale = UI.Scale.DEFAULT,
+    })
+end
+
+SubscribeToEvents = function()
+    SubscribeToEvent("Update", "HandleUpdate")
+end
+
+-- ============================================================================
+-- CreateUI — 创建根节点、手、拖拽线、颜色指示器
+-- ============================================================================
+
+CreateUI = function()
+    G.ComputeUIScale()
+    local game = G.game
+
+    -- 初始化手的位置到屏幕中央
+    game.handX = (graphics.width / G.uiScale) / 2
+    game.handY = (graphics.height / G.uiScale) / 2
+
+    G.uiRoot = UI.Panel {
+        id = "root",
+        width = "100%",
+        height = "100%",
+        backgroundColor = { 0, 0, 0, 0 },
+        children = {
+            UIScreens.CreateMenuScreen(),
+        }
+    }
+
+    -- 颜色指示器
+    local colorIndicator = UI.Panel {
+        id = "colorIndicator",
+        position = "fixed",
+        width = 12, height = 12,
+        borderRadius = 6,
+        backgroundColor = { 255, 0, 0, 255 },
+        visible = false,
+        pointerEvents = "none",
+        borderWidth = 2,
+        borderColor = { 255, 255, 255, 255 },
+    }
+
+    -- 拖拽连线占位
+    G.dragLineWidget = UI.Panel {
+        id = "dragLine",
+        position = "fixed",
+        width = 0, height = 0,
+        pointerEvents = "none",
+    }
+
+    -- 手 Widget
+    local halfHand = HAND_SIZE / 2
+    G.handWidget = UI.Panel {
+        id = "hand",
+        position = "fixed",
+        left = game.handX - halfHand,
+        top = game.handY - halfHand * 0.3,
+        width = HAND_SIZE,
+        height = HAND_SIZE,
+        pointerEvents = "none",
+        zIndex = 999,
+        backgroundImage = "image/hand_open.png",
+        backgroundFit = "contain",
+    }
+
+    UI.SetRoot(G.uiRoot)
+
+    G.uiRoot:AddChild(colorIndicator)
+    G.uiRoot:AddChild(G.dragLineWidget)
+    G.uiRoot:AddChild(G.handWidget)
+    Audio.CreateMuteButton()
+end
+
+-- ============================================================================
+-- InitLevel — 关卡初始化
+-- ============================================================================
+
+InitLevel = function(levelNum)
+    local cfg = Config.GetLevelConfig(levelNum)
+    if not cfg then return end
+
+    local game = G.game
+
+    -- 切换 BGM
+    Audio.UpdateBGMForLevel(levelNum)
+
+    game.level = levelNum
+    game.totalPairs = cfg.pairs
+    game.correctCount = 0
+    game.dragging = false
+    game.dragSide = nil
+    game.dragIndex = nil
+    game.playerConnections = {}
+    game.timer = cfg.showTime
+    game.showProgress = 0
+    game.countdownTimer = 0
+    game.handGrabbing = false
+    game.playTimer = 60
+
+    -- 广告数量
+    local adLimits = { 0, 2, 8, 10, 12 }
+    if levelNum <= #adLimits then
+        game.adMaxForLevel = adLimits[levelNum]
+    else
+        game.adMaxForLevel = 12 + (levelNum - 5) * 3
+    end
+    game.adSpawned = 0
+    game.adCount = 0
+    game.adTimer = 0
+    game.adNextInterval = 3 + math.random() * 3
+
+    -- 清除残留广告
+    for _, w in ipairs(G.adWidgets) do
+        if w then w:Remove() end
+    end
+    G.adWidgets = {}
+
+    -- 蚊子彩蛋
+    if levelNum == 1 then
+        game.mosquitoLevel = math.random(1, 5)
+        game.mosquitoDead = false
+    end
+    if levelNum == game.mosquitoLevel and not game.mosquitoDead then
+        local dpr = graphics:GetDPR()
+        local scrW = graphics:GetWidth() / dpr
+        local scrH = graphics:GetHeight() / dpr
+        game.mosquitoAlive = true
+        game.mosquitoX = math.random(60, math.max(61, math.floor(scrW - 120)))
+        game.mosquitoY = math.random(60, math.max(61, math.floor(scrH - 120)))
+        game.mosquitoTargetX = math.random(60, math.max(61, math.floor(scrW - 120)))
+        game.mosquitoTargetY = math.random(60, math.max(61, math.floor(scrH - 120)))
+        game.mosquitoTimer = 0
+        game.mosquitoAngle = 0
+        print(string.format("[蚊子] 第%d关激活蚊子 pos=(%d,%d) scrSize=(%d,%d)",
+            levelNum, game.mosquitoX, game.mosquitoY, math.floor(scrW), math.floor(scrH)))
+        Audio.PlayMosquitoBuzz()
+    else
+        game.mosquitoAlive = false
+        Audio.StopMosquitoBuzz()
+    end
+
+    -- 打乱颜色顺序
+    local colorIndices = {}
+    for i = 1, #COLORS do colorIndices[i] = i end
+    for i = #colorIndices, 2, -1 do
+        local j = math.random(1, i)
+        colorIndices[i], colorIndices[j] = colorIndices[j], colorIndices[i]
+    end
+
+    -- 创建左右听筒
+    game.leftPhones = {}
+    game.rightPhones = {}
+    game.connections = {}
+
+    for i = 1, cfg.pairs do
+        game.leftPhones[i] = { colorIdx = colorIndices[i], lit = false }
+    end
+
+    local rightOrder = {}
+    for i = 1, cfg.pairs do rightOrder[i] = i end
+    for i = #rightOrder, 2, -1 do
+        local j = math.random(1, i)
+        rightOrder[i], rightOrder[j] = rightOrder[j], rightOrder[i]
+    end
+
+    for i = 1, cfg.pairs do
+        game.rightPhones[i] = { colorIdx = colorIndices[rightOrder[i]], lit = false }
+    end
+
+    -- 正确连线映射
+    for i = 1, cfg.pairs do
+        local leftColorIdx = game.leftPhones[i].colorIdx
+        for j = 1, cfg.pairs do
+            if game.rightPhones[j].colorIdx == leftColorIdx then
+                game.connections[i] = { leftIdx = i, rightIdx = j, colorIdx = leftColorIdx }
+                break
+            end
+        end
+    end
+
+    -- 直接进入连线
+    for i = 1, cfg.pairs do
+        game.leftPhones[i].lit = true
+        game.rightPhones[i].lit = true
+    end
+
+    game.state = STATE.PLAYING
+
+    G.ComputeUIScale()
+    PhoneLayout.GeneratePhonePositions()
+
+    print(string.format("=== 开始第 %d 关: %d 对 ===", levelNum, cfg.pairs))
+    RebuildGameUI()
+end
+
+-- ============================================================================
+-- HandleUpdate — 主更新循环
+-- ============================================================================
+
+---@param eventType string
+---@param eventData UpdateEventData
+function HandleUpdate(eventType, eventData)
+    local dt = eventData["TimeStep"]:GetFloat()
+    local game = G.game
+    G.ComputeUIScale()
+
+    -- 鼠标位置 → 基准像素
+    local mousePos = input.mousePosition
+    game.handX = mousePos.x / G.uiScale
+    game.handY = mousePos.y / G.uiScale
+
+    -- 手部抖动（第3关起）
+    if game.level >= 3 then
+        game.handShakeTime = game.handShakeTime + dt
+        local t = game.handShakeTime
+        local n = game.level - 2
+        local intensity = n * 2 + n * n * 0.3
+        game.handShakeOffsetX = math.sin(t * 7.3) * intensity * 0.6
+                              + math.sin(t * 13.1) * intensity * 0.3
+                              + math.sin(t * 23.7) * intensity * 0.1
+        game.handShakeOffsetY = math.cos(t * 5.7) * intensity * 0.5
+                              + math.cos(t * 11.3) * intensity * 0.35
+                              + math.cos(t * 19.9) * intensity * 0.15
+        game.handX = game.handX + game.handShakeOffsetX
+        game.handY = game.handY + game.handShakeOffsetY
+    else
+        game.handShakeOffsetX = 0
+        game.handShakeOffsetY = 0
+    end
+
+    -- 更新手 Widget 位置
+    if G.handWidget then
+        local halfHand = HAND_SIZE / 2
+        G.handWidget:SetStyle({
+            left = game.handX - halfHand,
+            top = game.handY - halfHand * 0.3,
+        })
+    end
+
+    -- 拖拽时：听筒跟随手
+    if game.dragging and game.dragIndex then
+        local epHalf = PHONE_EARPIECE_SIZE / 2
+        local newX = game.handX - epHalf
+        local newY = game.handY - epHalf * 0.5
+        if game.dragSide == "left" then
+            game.leftEarpiecePos[game.dragIndex] = { x = newX, y = newY }
+            local w = game.leftEarpieceWidgets[game.dragIndex]
+            if w then w:SetStyle({ left = newX, top = newY, zIndex = 150 }) end
+        elseif game.dragSide == "right" then
+            game.rightEarpiecePos[game.dragIndex] = { x = newX, y = newY }
+            local w = game.rightEarpieceWidgets[game.dragIndex]
+            if w then w:SetStyle({ left = newX, top = newY, zIndex = 150 }) end
+        end
+    end
+
+    -- ======== 绳索物理 ========
+    local isGameScreen = (game.state == STATE.PLAYING or game.state == STATE.SHOWING
+        or game.state == STATE.COUNTDOWN or game.state == STATE.SUCCESS)
+    if isGameScreen then
+        local sqSz = PHONE_SQUARE_SIZE
+
+        -- 左侧绳索
+        for i = 1, #game.leftRopes do
+            local sq = game.leftPhonePositions[i]
+            local ep = game.leftEarpiecePos[i]
+            if sq and ep and game.leftRopes[i] then
+                local ax, ay = PhoneLayout.GetEarpieceAnchor("left", i)
+                RopePhysics.Update(game.leftRopes[i], dt,
+                    sq.x + sqSz, sq.y + sqSz / 2, ep.x + ax, ep.y + ay)
+            end
+        end
+
+        -- 右侧绳索
+        for i = 1, #game.rightRopes do
+            local sq = game.rightPhonePositions[i]
+            local ep = game.rightEarpiecePos[i]
+            if sq and ep and game.rightRopes[i] then
+                local ax, ay = PhoneLayout.GetEarpieceAnchor("right", i)
+                RopePhysics.Update(game.rightRopes[i], dt,
+                    sq.x, sq.y + sqSz / 2, ep.x + ax, ep.y + ay)
+            end
+        end
+
+        -- 已连接的绳索
+        for leftIdx, rope in pairs(game.connRopes) do
+            local lep = game.leftEarpiecePos[leftIdx]
+            for _, pc in ipairs(game.playerConnections) do
+                if pc.leftIdx == leftIdx then
+                    local rep = game.rightEarpiecePos[pc.rightIdx]
+                    if lep and rep then
+                        local lax, lay = PhoneLayout.GetEarpieceAnchor("left", leftIdx)
+                        local rax, ray = PhoneLayout.GetEarpieceAnchor("right", pc.rightIdx)
+                        RopePhysics.Update(rope, dt,
+                            lep.x + lax, lep.y + lay, rep.x + rax, rep.y + ray)
+                    end
+                    break
+                end
+            end
+        end
+    end
+
+    -- ======== 广告弹窗 ========
+    if game.state == STATE.PLAYING and game.adSpawned < game.adMaxForLevel then
+        game.adTimer = game.adTimer + dt
+        if game.adTimer >= game.adNextInterval and game.adCount < 3 then
+            game.adTimer = 0
+            game.adNextInterval = 3 + math.random() * 4
+            AdSystem.SpawnAdAtRandomPos()
+        end
+    end
+
+    -- 拍打手势恢复
+    if game.handSlapping then
+        game.handSlapTimer = game.handSlapTimer - dt
+        if game.handSlapTimer <= 0 then
+            game.handSlapping = false
+            DragInput.UpdateHandAppearance()
+        end
+    end
+
+    -- BGM 保活
+    Audio.KeepBGMAlive()
+
+    -- MENU：上滑检测
+    if game.state == STATE.MENU and not game.menuAutoSlide then
+        if input:GetMouseButtonPress(MOUSEB_LEFT) then
+            game.menuSwipeStartY = game.handY
+        end
+        if input:GetMouseButtonDown(MOUSEB_LEFT) and game.menuSwipeStartY then
+            local dy = game.menuSwipeStartY - game.handY
+            if dy > 20 then
+                game.menuAutoSlide = true
+                game.menuSwipeStartY = nil
+            end
+        end
+        if not input:GetMouseButtonDown(MOUSEB_LEFT) then
+            game.menuSwipeStartY = nil
+        end
+    end
+
+    -- MENU：简历卡片自动飞出
+    if game.state == STATE.MENU and game.menuAutoSlide then
+        local dpr = graphics:GetDPR()
+        local scrH = graphics:GetHeight() / dpr
+        game.menuResumeOffsetY = game.menuResumeOffsetY + dt * scrH * 2.0
+        if game.menuResumeOffsetY >= scrH then
+            game.menuAutoSlide = false
+            game.state = STATE.APPLY
+            game.applyTimer = 3.0
+        end
+        RebuildGameUI()
+    end
+
+    -- APPLY：海报停留后进入 INTRO
+    if game.state == STATE.APPLY then
+        game.applyTimer = game.applyTimer - dt
+        if game.applyTimer <= 0 then
+            game.state = STATE.INTRO
+            game.introPage = 1
+            RebuildGameUI()
+        end
+    end
+
+    -- 电话铃声（无 BGM 状态）
+    local noBGMState = (game.state == STATE.INTRO
+        or game.state == STATE.CUTSCENE
+        or game.state == STATE.MENU
+        or game.state == STATE.APPLY)
+    if noBGMState then
+        Audio.StartPhoneRing()
+        Audio.UpdatePhoneRing(dt)
+    else
+        Audio.StopPhoneRing()
+    end
+
+    -- 蚊子飞行动画
+    if game.mosquitoAlive and not game.mosquitoDead then
+        Audio.EnsureMosquitoBuzz()
+        local dpr = graphics:GetDPR()
+        local scrW = graphics:GetWidth() / dpr
+        local scrH = graphics:GetHeight() / dpr
+        local speed = 250
+
+        local dx = game.mosquitoTargetX - game.mosquitoX
+        local dy = game.mosquitoTargetY - game.mosquitoY
+        local dist = math.sqrt(dx * dx + dy * dy)
+        if dist > 2 then
+            game.mosquitoX = game.mosquitoX + (dx / dist) * speed * dt
+            game.mosquitoY = game.mosquitoY + (dy / dist) * speed * dt
+            game.mosquitoAngle = math.atan(dy, dx)
+        end
+
+        game.mosquitoTimer = game.mosquitoTimer + dt
+        if dist <= 5 or game.mosquitoTimer > 2.0 then
+            game.mosquitoTimer = 0
+            game.mosquitoTargetX = math.random(40, math.floor(scrW - 80))
+            game.mosquitoTargetY = math.random(40, math.floor(scrH - 80))
+        end
+
+        if G.mosquitoWidget then
+            G.mosquitoWidget:SetStyle({
+                left = math.floor(game.mosquitoX),
+                top = math.floor(game.mosquitoY),
+            })
+        end
+
+        -- 检测手悬停蚊子
+        local mSize = PHONE_EARPIECE_SIZE * 2
+        local overNow = (game.handX >= game.mosquitoX and game.handX <= game.mosquitoX + mSize
+            and game.handY >= game.mosquitoY and game.handY <= game.mosquitoY + mSize)
+        if overNow ~= game.handOverMosquito then
+            game.handOverMosquito = overNow
+            DragInput.UpdateHandAppearance()
+        end
+    else
+        if game.handOverMosquito then
+            game.handOverMosquito = false
+            DragInput.UpdateHandAppearance()
+        end
+    end
+
+    -- 拖拽交互
+    if game.state == STATE.PLAYING and game.adCount <= 0 then
+        DragInput.HandleDragInput()
+    end
+    DragInput.UpdateDragLine()
+
+    -- ======== 状态转换 ========
+
+    if game.state == STATE.SHOWING then
+        game.timer = game.timer - dt
+        local cfg = Config.GetLevelConfig(game.level)
+        game.showProgress = 1.0 - (game.timer / cfg.showTime)
+
+        local progressBar = G.uiRoot and G.uiRoot:FindById("progressBar")
+        if progressBar then
+            progressBar:SetValue(1.0 - game.showProgress)
+        end
+
+        if game.timer <= 0 then
+            for i = 1, #game.leftPhones do game.leftPhones[i].lit = false end
+            for i = 1, #game.rightPhones do game.rightPhones[i].lit = false end
+            game.state = STATE.COUNTDOWN
+            game.countdownTimer = 0.8
+            RebuildGameUI()
+        end
+
+    elseif game.state == STATE.COUNTDOWN then
+        game.countdownTimer = game.countdownTimer - dt
+        if game.countdownTimer <= 0 then
+            game.state = STATE.PLAYING
+            RebuildGameUI()
+        end
+
+    elseif game.state == STATE.SUCCESS then
+        Confetti.Update(game.confetti, dt)
+        game.confettiTimer = game.confettiTimer - dt
+        if game.confettiTimer <= 0 and not game.showResignButtons then
+            game.confetti = {}
+            if game.level == 2 then
+                game.cutscenePage = 1
+                game.cutsceneSet = 1
+                game.state = STATE.CUTSCENE
+                RebuildGameUI()
+            elseif game.level == 4 then
+                game.cutscenePage = 1
+                game.cutsceneSet = 2
+                game.state = STATE.CUTSCENE
+                RebuildGameUI()
+            elseif game.level >= 5 then
+                game.showResignButtons = true
+                RebuildGameUI()
+            else
+                game.level = game.level + 1
+                InitLevel(game.level)
+                RebuildGameUI()
+            end
+        end
+
+        -- 连点辞职晃动 + 跑步动画帧
+        if game.resignClicking then
+            game.resignShakeTime = game.resignShakeTime + dt
+            game.resignAnimTimer = game.resignAnimTimer + dt
+            local frameTime = 1.0 / game.resignAnimFPS
+            if game.resignAnimTimer >= frameTime then
+                game.resignAnimTimer = game.resignAnimTimer - frameTime
+                game.resignAnimFrame = (game.resignAnimFrame % 3) + 1
+                RebuildGameUI()
+            end
+        end
+
+        -- 突脸倒计时
+        if game.jumpscareActive then
+            game.jumpscareTimer = game.jumpscareTimer - dt
+            if game.jumpscareTimer <= 0 then
+                game.jumpscareActive = false
+                game.showResignButtons = false
+                game.resignClicking = false
+                game.level = 1
+                Audio.StopBGM()
+                game.state = STATE.MENU
+                game.menuResumeOffsetY = 0
+                game.menuSwipeStartY = nil
+                game.menuAutoSlide = false
+                RebuildGameUI()
+            end
+        end
+
+    elseif game.state == STATE.FAIL then
+        -- 失败对话逐行弹出
+        if not game.failShowImage and game.failDialogue then
+            if game.failLineCount < #game.failDialogue then
+                game.failLineTimer = game.failLineTimer + dt
+                if game.failLineTimer >= FAIL_LINE_INTERVAL then
+                    game.failLineTimer = game.failLineTimer - FAIL_LINE_INTERVAL
+                    game.failLineCount = game.failLineCount + 1
+                    RebuildGameUI()
+                end
+            else
+                game.failLineTimer = (game.failLineTimer or 0) + dt
+                if game.failLineTimer >= 1.2 then
+                    game.failShowImage = true
+                    RebuildGameUI()
+                end
+            end
+        end
+
+        -- 连点辞职（与 SUCCESS 共享逻辑）
+        if game.resignClicking then
+            game.resignShakeTime = game.resignShakeTime + dt
+            game.resignAnimTimer = game.resignAnimTimer + dt
+            local frameTime = 1.0 / game.resignAnimFPS
+            if game.resignAnimTimer >= frameTime then
+                game.resignAnimTimer = game.resignAnimTimer - frameTime
+                game.resignAnimFrame = (game.resignAnimFrame % 3) + 1
+                RebuildGameUI()
+            end
+        end
+
+        -- 突脸倒计时（与 SUCCESS 共享）
+        if game.jumpscareActive then
+            game.jumpscareTimer = game.jumpscareTimer - dt
+            if game.jumpscareTimer <= 0 then
+                game.jumpscareActive = false
+                game.showResignButtons = false
+                game.resignClicking = false
+                game.level = 1
+                Audio.StopBGM()
+                game.state = STATE.MENU
+                game.menuResumeOffsetY = 0
+                game.menuSwipeStartY = nil
+                game.menuAutoSlide = false
+                RebuildGameUI()
+            end
+        end
+
+    elseif game.state == STATE.PLAYING then
+        game.playTimer = game.playTimer - dt
+        local sec = math.max(0, math.ceil(game.playTimer))
+        local timerLabel = G.uiRoot and G.uiRoot:FindById("playTimerLabel")
+        if timerLabel then
+            timerLabel:SetText(string.format("%ds", sec))
+            if sec <= 10 then
+                timerLabel:SetStyle({ fontColor = { 220, 50, 50, 255 } })
+            end
+        end
+
+        if game.playTimer <= 0 then
+            print("时间耗尽! 游戏结束")
+            DragInput.EnterFailState()
+        end
+    end
+end
+
+-- ============================================================================
+-- RebuildGameUI — 状态驱动的屏幕重建
+-- ============================================================================
+
+RebuildGameUI = function()
+    if not G.uiRoot then return end
+
+    local game = G.game
+
+    -- 保存浮层引用
+    local hand = G.handWidget
+    local colorInd = G.uiRoot:FindById("colorIndicator")
+    local dragLine = G.dragLineWidget
+
+    -- 移除所有浮层
+    if hand then hand:Remove() end
+    if colorInd then colorInd:Remove() end
+    if dragLine then dragLine:Remove() end
+    for _, aw in ipairs(G.adWidgets) do
+        if aw then aw:Remove() end
+    end
+    if G.mosquitoWidget then G.mosquitoWidget:Remove() end
+    if G.muteButtonWidget then G.muteButtonWidget:Remove() end
+    if G.resignBtnWidget then G.resignBtnWidget:Remove() end
+    if G.jumpscareWidget then G.jumpscareWidget:Remove() end
+    PhoneWidget.RemovePhoneWidgets()
+
+    G.uiRoot:ClearChildren()
+
+    local isGameScreen = (game.state == STATE.PLAYING or game.state == STATE.SHOWING
+        or game.state == STATE.COUNTDOWN)
+
+    -- 屏幕内容分派
+    if game.state == STATE.MENU then
+        G.uiRoot:AddChild(UIScreens.CreateMenuScreen())
+    elseif game.state == STATE.APPLY then
+        G.uiRoot:AddChild(UIScreens.CreateApplyScreen())
+    elseif game.state == STATE.INTRO then
+        G.uiRoot:AddChild(UIScreens.CreateIntroScreen())
+    elseif game.state == STATE.CUTSCENE then
+        G.uiRoot:AddChild(UIScreens.CreateCutsceneScreen())
+    elseif isGameScreen or game.state == STATE.SUCCESS then
+        G.uiRoot:AddChild(UIScreens.CreateGameScreen(true))
+    elseif game.state == STATE.FAIL then
+        G.uiRoot:AddChild(UIScreens.CreateFailScreen())
+    end
+
+    -- 游戏界面：听筒浮层
+    if isGameScreen or game.state == STATE.SUCCESS then
+        PhoneWidget.CreatePhoneWidgets()
+        for _, pw in ipairs(G.phoneWidgets) do
+            G.uiRoot:AddChild(pw)
+        end
+    end
+
+    -- 恢复浮层
+    if colorInd then G.uiRoot:AddChild(colorInd) end
+    if dragLine then G.uiRoot:AddChild(dragLine) end
+    for _, aw in ipairs(G.adWidgets) do
+        if aw then G.uiRoot:AddChild(aw) end
+    end
+    if hand then G.uiRoot:AddChild(hand) end
+
+    -- 静音按钮
+    Audio.CreateMuteButton()
+
+    -- 蚊子浮层
+    local isGameScreen2 = (game.state == STATE.PLAYING or game.state == STATE.SHOWING
+        or game.state == STATE.COUNTDOWN or game.state == STATE.SUCCESS
+        or game.state == STATE.FAIL)
+    if isGameScreen2 and (game.mosquitoAlive or game.mosquitoDead) then
+        local imgPath = game.mosquitoDead and "image/mosquito_dead.png" or "image/mosquito_alive.png"
+        local posX = game.mosquitoDead and game.mosquitoDeadX or game.mosquitoX
+        local posY = game.mosquitoDead and game.mosquitoDeadY or game.mosquitoY
+        local mSize = game.mosquitoDead and (PHONE_SQUARE_SIZE * 2) or (PHONE_EARPIECE_SIZE * 2)
+        G.mosquitoWidget = UI.Panel {
+            id = "mosquitoOverlay",
+            position = "fixed",
+            left = math.floor(posX),
+            top = math.floor(posY),
+            width = mSize,
+            height = mSize,
+            zIndex = 9999,
+            pointerEvents = game.mosquitoDead and "none" or "auto",
+            backgroundImage = imgPath,
+            backgroundSize = "contain",
+            onClick = (not game.mosquitoDead) and function(self)
+                game.mosquitoAlive = false
+                game.mosquitoDead = true
+                game.mosquitoDeadX = game.mosquitoX
+                game.mosquitoDeadY = game.mosquitoY
+                Audio.StopMosquitoBuzz()
+                game.handSlapping = true
+                game.handSlapTimer = 0.3
+                DragInput.UpdateHandAppearance()
+                RebuildGameUI()
+            end or nil,
+        }
+        G.uiRoot:AddChild(G.mosquitoWidget)
+    else
+        G.mosquitoWidget = nil
+    end
+
+    -- 辞职/坚持按钮
+    if game.showResignButtons and (game.state == STATE.SUCCESS or game.state == STATE.FAIL) and game.level >= 5 then
+        local logW = graphics.width / G.uiScale
+        local logH = graphics.height / G.uiScale
+        local shortSide = math.min(logW, logH)
+
+        local btnW = 960
+        local btnH = 400
+        local gap = 32
+        local totalW = btnW * 2 + gap
+        local startX = (logW - totalW) / 2
+        local btnTop = math.floor((logH - btnH) / 2)
+
+        local RESIGN_RUN_FRAMES = {
+            "image/resign_run1.png",
+            "image/resign_run2.png",
+            "image/resign_run3.png",
+        }
+
+        local resignChildren = {}
+        local runAnimH = math.floor(btnH * 0.8 * 2.5)
+        local runAnimW = math.floor(btnW * 2.5)
+
+        if game.resignClicking then
+            local runImg = RESIGN_RUN_FRAMES[game.resignAnimFrame] or RESIGN_RUN_FRAMES[1]
+            resignChildren = {
+                UI.Panel {
+                    width = runAnimW,
+                    height = runAnimH,
+                    backgroundImage = runImg,
+                    backgroundFit = "contain",
+                    pointerEvents = "box-none",
+                },
+                UI.Panel {
+                    width = btnW,
+                    height = btnH,
+                    backgroundImage = "image/btn_resign.png",
+                    backgroundFit = "contain",
+                    onClick = function(self)
+                        local now = time:GetElapsedTime()
+                        local interval = now - game.resignLastClickTime
+                        game.resignLastClickTime = now
+                        if interval > 0 and interval < 2.0 then
+                            game.resignClickInterval = interval
+                            game.resignAnimFPS = math.min(20, math.max(3, 1.5 / interval))
+                        end
+                        game.resignClicks = game.resignClicks + 1
+                        if game.resignClicks >= game.resignClicksNeeded then
+                            game.resignClicking = false
+                            game.jumpscareActive = true
+                            game.jumpscareTimer = 3.0
+                            RebuildGameUI()
+                        end
+                    end,
+                },
+            }
+        else
+            resignChildren = {
+                UI.Panel {
+                    width = btnW,
+                    height = btnH,
+                    backgroundImage = "image/btn_resign.png",
+                    backgroundFit = "contain",
+                    onClick = function(self)
+                        game.resignClicking = true
+                        game.resignClicks = 1
+                        game.resignShakeTime = 0
+                        game.resignAnimFrame = 1
+                        game.resignAnimTimer = 0
+                        game.resignAnimFPS = 3
+                        game.resignLastClickTime = time:GetElapsedTime()
+                        RebuildGameUI()
+                    end,
+                },
+                UI.Panel {
+                    width = btnW,
+                    height = btnH,
+                    backgroundImage = "image/btn_endure.png",
+                    backgroundFit = "contain",
+                    onClick = function(self)
+                        game.showResignButtons = false
+                        game.resignClicking = false
+                        if game.state == STATE.FAIL then
+                            InitLevel(game.level)
+                        else
+                            game.level = game.level + 1
+                            InitLevel(game.level)
+                            RebuildGameUI()
+                        end
+                    end,
+                },
+            }
+        end
+
+        local containerH = game.resignClicking and (runAnimH + btnH + 8) or btnH
+        local containerW = game.resignClicking and math.max(runAnimW, btnW) or totalW
+        local containerLeft = math.floor((logW - containerW) / 2)
+        local containerTop = game.resignClicking and math.max(0, math.floor((logH - containerH) / 2)) or btnTop
+
+        G.resignBtnWidget = UI.Panel {
+            id = "resignBtnContainer",
+            position = "fixed",
+            left = game.resignClicking and containerLeft or math.floor(startX),
+            top = containerTop,
+            width = containerW,
+            height = containerH,
+            zIndex = 9500,
+            flexDirection = game.resignClicking and "column" or "row",
+            alignItems = "center",
+            gap = game.resignClicking and 8 or gap,
+            children = resignChildren,
+        }
+        G.uiRoot:AddChild(G.resignBtnWidget)
+
+        -- 连点提示文字
+        if game.resignClicking then
+            local hintW = 200
+            local resignHint = UI.Panel {
+                id = "resignHint",
+                position = "fixed",
+                left = math.floor((logW - hintW) / 2),
+                top = containerTop + containerH + 10,
+                width = hintW,
+                height = 20,
+                zIndex = 9501,
+                justifyContent = "center",
+                alignItems = "center",
+                children = {
+                    UI.Label {
+                        text = "请快速点击辞职按钮",
+                        fontSize = 11,
+                        fontColor = { 220, 50, 50, 255 },
+                        whiteSpace = "nowrap",
+                    },
+                },
+            }
+            G.uiRoot:AddChild(resignHint)
+        end
+    else
+        G.resignBtnWidget = nil
+    end
+
+    -- 突脸图层
+    if game.jumpscareActive then
+        G.jumpscareWidget = UI.Panel {
+            id = "jumpscareOverlay",
+            position = "fixed",
+            left = 0, top = 0,
+            width = "100%", height = "100%",
+            zIndex = 99999,
+            backgroundImage = "image/jumpscare.png",
+            backgroundSize = "cover",
+            backgroundColor = "#FFB0B0",
+        }
+        G.uiRoot:AddChild(G.jumpscareWidget)
+    else
+        G.jumpscareWidget = nil
+    end
+end
