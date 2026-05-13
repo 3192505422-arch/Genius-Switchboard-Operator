@@ -1,0 +1,192 @@
+-- ============================================================================
+-- PhoneLayout.lua - 听筒位置生成与管理
+-- ============================================================================
+
+local Config = require "Config"
+local G = require "G"
+
+local M = {}
+
+local PHONE_SQUARE_SIZE   = Config.PHONE_SQUARE_SIZE
+local PHONE_EARPIECE_SIZE = Config.PHONE_EARPIECE_SIZE
+local PHONE_MARGIN_EDGE   = Config.PHONE_MARGIN_EDGE
+
+--- 在指定区域内随机生成不重叠的位置
+function M.GenerateRandomPositions(count, xMin, xMax, yMin, yMax, phoneW, phoneH)
+    local positions = {}
+    local minDist = phoneH * 0.8
+    local maxAttempts = 200
+
+    for i = 1, count do
+        local placed = false
+        for attempt = 1, maxAttempts do
+            local x = xMin + math.random() * math.max(0, xMax - xMin - phoneW)
+            local y = yMin + math.random() * math.max(0, yMax - yMin - phoneH)
+            local ok = true
+            for _, p in ipairs(positions) do
+                local dx = (x + phoneW / 2) - (p.x + phoneW / 2)
+                local dy = (y + phoneH / 2) - (p.y + phoneH / 2)
+                if math.sqrt(dx * dx + dy * dy) < minDist then
+                    ok = false
+                    break
+                end
+            end
+            if ok then
+                positions[#positions + 1] = { x = x, y = y }
+                placed = true
+                break
+            end
+        end
+        if not placed then
+            local y = yMin + (i - 0.5) / count * (yMax - yMin - phoneH)
+            local x = xMin + math.random() * math.max(0, xMax - xMin - phoneW)
+            positions[#positions + 1] = { x = x, y = y }
+        end
+    end
+    return positions
+end
+
+--- 为当前关卡生成色块和听筒的独立位置
+function M.GeneratePhonePositions()
+    local game = G.game
+    local screenW = graphics.width / G.uiScale
+    local screenH = graphics.height / G.uiScale
+
+    local count = math.max(#game.leftPhones, #game.rightPhones)
+    local topMargin = 30
+    local bottomMargin = 50
+    local availH = screenH - topMargin - bottomMargin
+    local spacing = availH / (count + 1)
+
+    game.leftPhonePositions = {}
+    game.rightPhonePositions = {}
+    game.leftEarpiecePos = {}
+    game.rightEarpiecePos = {}
+
+    -- 左侧：色块贴左边缘
+    for i = 1, #game.leftPhones do
+        local y = topMargin + spacing * i - PHONE_SQUARE_SIZE / 2
+        game.leftPhonePositions[i] = { x = PHONE_MARGIN_EDGE, y = y }
+    end
+
+    -- 右侧：色块贴右边缘
+    for i = 1, #game.rightPhones do
+        local y = topMargin + spacing * i - PHONE_SQUARE_SIZE / 2
+        local sqX = screenW - PHONE_MARGIN_EDGE - PHONE_SQUARE_SIZE
+        game.rightPhonePositions[i] = { x = sqX, y = y }
+    end
+
+    -- 左侧听筒：随机散布在左半区域
+    local epSz = PHONE_EARPIECE_SIZE
+    local leftEpXMin = PHONE_MARGIN_EDGE + PHONE_SQUARE_SIZE + 15
+    local leftEpXMax = screenW * 0.42
+    local epYMin = topMargin
+    local epYMax = screenH - bottomMargin
+    local leftRandPos = M.GenerateRandomPositions(
+        #game.leftPhones, leftEpXMin, leftEpXMax, epYMin, epYMax, epSz, epSz)
+    for i = 1, #game.leftPhones do
+        game.leftEarpiecePos[i] = leftRandPos[i]
+    end
+
+    -- 右侧听筒：随机散布在右半区域
+    local rightEpXMin = screenW * 0.58
+    local rightEpXMax = screenW - PHONE_MARGIN_EDGE - PHONE_SQUARE_SIZE - 15
+    local rightRandPos = M.GenerateRandomPositions(
+        #game.rightPhones, rightEpXMin, rightEpXMax, epYMin, epYMax, epSz, epSz)
+    for i = 1, #game.rightPhones do
+        game.rightEarpiecePos[i] = rightRandPos[i]
+    end
+
+    -- 存储初始位置（用于拖拽后回弹）
+    game.leftEarpieceRestPos = {}
+    game.rightEarpieceRestPos = {}
+    for i = 1, #game.leftPhones do
+        game.leftEarpieceRestPos[i] = { x = game.leftEarpiecePos[i].x, y = game.leftEarpiecePos[i].y }
+    end
+    for i = 1, #game.rightPhones do
+        game.rightEarpieceRestPos[i] = { x = game.rightEarpiecePos[i].x, y = game.rightEarpiecePos[i].y }
+    end
+
+    -- 为每对连线生成随机弯曲度
+    game.lineSags = {}
+    for i = 1, #game.connections do
+        game.lineSags[i] = (math.random() - 0.5) * 120
+    end
+
+    -- 初始化绳索物理
+    local RopePhysics = require "RopePhysics"
+    local sqSz = PHONE_SQUARE_SIZE
+
+    game.leftRopes = {}
+    for i = 1, #game.leftPhones do
+        local sq = game.leftPhonePositions[i]
+        local ep = game.leftEarpiecePos[i]
+        local sx, sy = sq.x + sqSz, sq.y + sqSz / 2
+        local ax, ay = M.GetEarpieceAnchor("left", i)
+        local ex, ey = ep.x + ax, ep.y + ay
+        game.leftRopes[i] = RopePhysics.Create(sx, sy, ex, ey, 1.5)
+    end
+
+    game.rightRopes = {}
+    for i = 1, #game.rightPhones do
+        local sq = game.rightPhonePositions[i]
+        local ep = game.rightEarpiecePos[i]
+        local sx, sy = sq.x, sq.y + sqSz / 2
+        local ax, ay = M.GetEarpieceAnchor("right", i)
+        local ex, ey = ep.x + ax, ep.y + ay
+        game.rightRopes[i] = RopePhysics.Create(sx, sy, ex, ey, 1.5)
+    end
+
+    game.connRopes = {}
+    game.dragRope = nil
+end
+
+--- 获取听筒小圆圈的锚点位置（相对于听筒左上角）
+function M.GetEarpieceAnchor(side, index)
+    local game = G.game
+    local epSz = PHONE_EARPIECE_SIZE
+    if side == "left" then
+        for _, pc in ipairs(game.playerConnections) do
+            if pc.leftIdx == index then
+                return epSz * 0.32, epSz * 0.12
+            end
+        end
+        return epSz * 0.12, epSz * 0.32
+    else
+        for _, pc in ipairs(game.playerConnections) do
+            if pc.rightIdx == index then
+                return epSz * 0.32, epSz * 0.12
+            end
+        end
+        return epSz * 0.88, epSz * 0.32
+    end
+end
+
+--- 获取听筒的静止位置
+function M.GetEarpieceRestPos(side, index)
+    local game = G.game
+    if side == "left" then
+        local p = game.leftEarpieceRestPos[index]
+        return { x = p.x, y = p.y }
+    else
+        local p = game.rightEarpieceRestPos[index]
+        return { x = p.x, y = p.y }
+    end
+end
+
+--- 将听筒弹回静止位置
+function M.SnapEarpieceBack(side, index)
+    local game = G.game
+    local restPos = M.GetEarpieceRestPos(side, index)
+    if side == "left" then
+        game.leftEarpiecePos[index] = restPos
+        local w = game.leftEarpieceWidgets[index]
+        if w then w:SetStyle({ left = restPos.x, top = restPos.y, zIndex = 100 }) end
+    else
+        game.rightEarpiecePos[index] = restPos
+        local w = game.rightEarpieceWidgets[index]
+        if w then w:SetStyle({ left = restPos.x, top = restPos.y, zIndex = 100 }) end
+    end
+end
+
+return M
