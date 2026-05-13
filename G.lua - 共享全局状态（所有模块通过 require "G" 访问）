@@ -1,0 +1,188 @@
+-- ============================================================================
+-- G.lua - 共享全局状态（所有模块通过 require "G" 访问）
+-- ============================================================================
+
+local Config = require "Config"
+local STATE = Config.STATE
+
+local M = {}
+
+-- ============================================================================
+-- Widget 引用
+-- ============================================================================
+---@type Widget
+M.uiRoot = nil
+---@type Widget
+M.handWidget = nil
+---@type Widget
+M.dragLineWidget = nil
+M.adWidgets = {}
+M.mosquitoWidget = nil
+---@type Widget
+M.muteButtonWidget = nil
+---@type Widget
+M.resignBtnWidget = nil
+---@type Widget
+M.jumpscareWidget = nil
+M.phoneWidgets = {}
+M.uiScale = 1
+
+-- ============================================================================
+-- NanoVG 引用
+-- ============================================================================
+M.vg = nil
+M.embossFontId = -1
+M.digitImages = {}
+M.redDigitImages = {}
+M.colonImage = nil
+M.topDeviceImage = nil
+M.charImage = nil
+M.bgImage = nil
+
+-- ============================================================================
+-- 音频引用
+-- ============================================================================
+M.audioScene = nil
+M.mosquitoSoundNode = nil
+M.mosquitoSoundSource = nil
+M.mosquitoBuzzSound = nil
+M.bgmNode = nil
+M.bgmSource = nil
+M.bgmCurrentTrack = nil
+M.bgmSoundRes = {}
+M.phoneRingNode = nil
+M.phoneRingSource = nil
+M.phoneRingPlaying = false
+M.phoneRingTimer = 0
+M.phoneRingRinging = false
+M.gameMuted = false
+
+-- ============================================================================
+-- 回调函数（由 main.lua 设置，打破循环依赖）
+-- ============================================================================
+M.InitLevel = nil       -- function(levelNum)
+M.RebuildGameUI = nil   -- function()
+
+-- ============================================================================
+-- 游戏状态
+-- ============================================================================
+M.game = {
+    state = STATE.MENU,
+    menuResumeOffsetY = 0,
+    menuSwipeStartY = nil,
+    menuAutoSlide = false,
+    applyTimer = 3.0,
+    introPage = 1,
+    cutscenePage = 1,
+    cutsceneSet = 1,
+    -- 失败对话状态
+    failDialogue = nil,
+    failUsedIndices = {},
+    failLineCount = 0,
+    failLineTimer = 0,
+    failShowImage = false,
+    level = 1,
+    timer = 0,
+    connections = {},
+    leftPhones = {},
+    rightPhones = {},
+    -- 拖拽状态
+    dragging = false,
+    dragSide = nil,
+    dragIndex = nil,
+    dragStartX = 0,
+    dragStartY = 0,
+    -- 玩家已完成的连线
+    playerConnections = {},
+    correctCount = 0,
+    totalPairs = 0,
+    -- 动画
+    showProgress = 0,
+    countdownTimer = 0,
+    -- 听筒Widget引用
+    leftPhoneWidgets = {},
+    rightPhoneWidgets = {},
+    -- 手位置
+    handX = 200,
+    handY = 300,
+    -- 手势状态
+    handGrabbing = false,
+    handSlapping = false,
+    handSlapTimer = 0,
+    handOverMosquito = false,
+    -- 手部抖动
+    handShakeTime = 0,
+    handShakeOffsetX = 0,
+    handShakeOffsetY = 0,
+    -- 彩纸庆祝
+    confetti = {},
+    confettiTimer = 0,
+    -- 连线倒计时
+    playTimer = 60,
+    -- 色块位置
+    leftPhonePositions = {},
+    rightPhonePositions = {},
+    -- 听筒位置
+    leftEarpiecePos = {},
+    rightEarpiecePos = {},
+    -- 分离的Widget引用
+    leftSquareWidgets = {},
+    rightSquareWidgets = {},
+    leftEarpieceWidgets = {},
+    rightEarpieceWidgets = {},
+    -- 连线弯曲度
+    lineSags = {},
+    -- 听筒初始位置
+    leftEarpieceRestPos = {},
+    rightEarpieceRestPos = {},
+    -- 绳索物理
+    leftRopes = {},
+    rightRopes = {},
+    connRopes = {},
+    dragRope = nil,
+    -- 广告弹窗状态
+    adCount = 0,
+    adTimer = 0,
+    adNextInterval = 0,
+    adSpawned = 0,
+    adMaxForLevel = 3,
+    -- 蚊子彩蛋
+    mosquitoLevel = 0,
+    mosquitoAlive = false,
+    mosquitoDead = false,
+    mosquitoX = 0,
+    mosquitoY = 0,
+    mosquitoTargetX = 0,
+    mosquitoTargetY = 0,
+    mosquitoDeadX = 0,
+    mosquitoDeadY = 0,
+    mosquitoAngle = 0,
+    mosquitoTimer = 0,
+    -- 辞职按钮
+    showResignButtons = false,
+    resignClicking = false,
+    resignClicks = 0,
+    resignClicksNeeded = 10,
+    resignShakeTime = 0,
+    resignAnimFrame = 1,
+    resignAnimTimer = 0,
+    resignAnimFPS = 3,
+    resignLastClickTime = 0,
+    resignClickInterval = 1.0,
+    jumpscareActive = false,
+    jumpscareTimer = 0,
+}
+
+-- ============================================================================
+-- UI 缩放计算
+-- ============================================================================
+
+function M.ComputeUIScale()
+    local dpr = graphics:GetDPR()
+    local shortSide = math.min(graphics.width, graphics.height) / dpr
+    local densityFactor = math.sqrt(shortSide / 720)
+    densityFactor = math.max(0.625, math.min(densityFactor, 1.0))
+    M.uiScale = dpr * densityFactor
+end
+
+return M
