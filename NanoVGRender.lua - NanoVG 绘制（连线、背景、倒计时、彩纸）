@@ -1,0 +1,214 @@
+-- ============================================================================
+-- NanoVGRender.lua - NanoVG 绘制（连线、背景、倒计时、彩纸）
+-- ============================================================================
+
+local Config = require "Config"
+local G = require "G"
+local RopePhysics = require "RopePhysics"
+local Confetti = require "Confetti"
+
+local M = {}
+
+local STATE    = Config.STATE
+local BG_COLOR = Config.BG_COLOR
+
+-- ============================================================================
+-- 数字时钟绘制
+-- ============================================================================
+
+--- 用 NanoVG 绘制单个数字图片
+function M.DrawDigitImage(img, x, y, w, h)
+    if not img or img <= 0 then return end
+    local vg = G.vg
+    local paint = nvgImagePattern(vg, x, y, w, h, 0, img, 1.0)
+    nvgBeginPath(vg)
+    nvgRect(vg, x, y, w, h)
+    nvgFillPaint(vg, paint)
+    nvgFill(vg)
+end
+
+--- 绘制数字时钟计时器（SS 格式）
+function M.DrawDigitalClock(centerX, topY, sec, digitH, isRed)
+    local totalSec = math.max(0, sec)
+    local ss = totalSec % 60
+    local d1 = math.floor(ss / 10)
+    local d2 = ss % 10
+
+    local imgs = isRed and G.redDigitImages or G.digitImages
+
+    local digitW = digitH * 0.67
+    local spacing = digitH * 0.1
+    local totalW = digitW * 2 + spacing
+    local startX = centerX - totalW / 2
+
+    local cx = startX
+    M.DrawDigitImage(imgs[d1], cx, topY, digitW, digitH)
+    cx = cx + digitW + spacing
+    M.DrawDigitImage(imgs[d2], cx, topY, digitW, digitH)
+end
+
+-- ============================================================================
+-- 浮雕倒计时
+-- ============================================================================
+
+function M.DrawEmbossedCountdown(cx, cy, sec, radius)
+    local vg = G.vg
+    local baseR, baseG, baseB = BG_COLOR[1], BG_COLOR[2], BG_COLOR[3]
+    local shadowR = math.max(0, baseR - 30)
+    local shadowG = math.max(0, baseG - 20)
+    local shadowB = math.max(0, baseB - 18)
+    local highlightR = math.min(255, baseR + 35)
+    local highlightG = math.min(255, baseG + 30)
+    local highlightB = math.min(255, baseB + 28)
+
+    local strokeW = 2.5
+
+    -- 阴影层
+    nvgBeginPath(vg)
+    nvgCircle(vg, cx + 1.2, cy + 1.2, radius)
+    nvgStrokeColor(vg, nvgRGBA(shadowR, shadowG, shadowB, 160))
+    nvgStrokeWidth(vg, strokeW)
+    nvgStroke(vg)
+
+    -- 高光层
+    nvgBeginPath(vg)
+    nvgCircle(vg, cx - 1.0, cy - 1.0, radius)
+    nvgStrokeColor(vg, nvgRGBA(highlightR, highlightG, highlightB, 100))
+    nvgStrokeWidth(vg, strokeW)
+    nvgStroke(vg)
+
+    -- 主体圆环
+    nvgBeginPath(vg)
+    nvgCircle(vg, cx, cy, radius)
+    nvgStrokeColor(vg, nvgRGBA(baseR + 10, baseG + 8, baseB + 6, 120))
+    nvgStrokeWidth(vg, strokeW)
+    nvgStroke(vg)
+
+    -- 内圆环
+    local innerR = radius * 0.88
+    nvgBeginPath(vg)
+    nvgCircle(vg, cx, cy, innerR)
+    nvgStrokeColor(vg, nvgRGBA(shadowR, shadowG, shadowB, 80))
+    nvgStrokeWidth(vg, 1.5)
+    nvgStroke(vg)
+end
+
+-- ============================================================================
+-- 主渲染函数
+-- ============================================================================
+
+function M.HandleNanoVGRender(eventType, eventData)
+    local vg = G.vg
+    if not vg then return end
+
+    local game = G.game
+    local physW = graphics:GetWidth()
+    local physH = graphics:GetHeight()
+    local logW = physW / G.uiScale
+    local logH = physH / G.uiScale
+    nvgBeginFrame(vg, logW, logH, G.uiScale)
+
+    -- 连点辞职画面晃动
+    if game.resignClicking then
+        local intensity = 3 + (game.resignClicks / game.resignClicksNeeded) * 8
+        local shakeX = math.sin(game.resignShakeTime * 37) * intensity
+        local shakeY = math.cos(game.resignShakeTime * 29) * intensity
+        nvgSave(vg)
+        nvgTranslate(vg, shakeX, shakeY)
+    end
+
+    -- 始终绘制背景
+    nvgBeginPath(vg)
+    nvgRect(vg, 0, 0, logW, logH)
+    if G.bgImage then
+        local imgW, imgH = nvgImageSize(vg, G.bgImage)
+        local imgAspect = imgW / imgH
+        local scrAspect = logW / logH
+        local drawW, drawH, drawX, drawY
+        if scrAspect > imgAspect then
+            drawW = logW
+            drawH = logW / imgAspect
+            drawX = 0
+            drawY = (logH - drawH) / 2
+        else
+            drawH = logH
+            drawW = logH * imgAspect
+            drawX = (logW - drawW) / 2
+            drawY = 0
+        end
+        local bgPaint = nvgImagePattern(vg, drawX, drawY, drawW, drawH, 0, G.bgImage, 1.0)
+        nvgFillPaint(vg, bgPaint)
+    else
+        nvgFillColor(vg, nvgRGBA(BG_COLOR[1], BG_COLOR[2], BG_COLOR[3], 255))
+    end
+    nvgFill(vg)
+
+    -- 浮雕倒计时
+    local isGameScreen = (game.state == STATE.PLAYING or game.state == STATE.SHOWING
+        or game.state == STATE.COUNTDOWN or game.state == STATE.SUCCESS)
+
+    -- 顶部装置图片
+    if isGameScreen and G.topDeviceImage and G.topDeviceImage > 0 then
+        local devW = logW * 0.675
+        local devH = devW / 1.506
+        local devX = (logW - devW) / 2
+        local devY = -devH * 0.30
+        local devPaint = nvgImagePattern(vg, devX, devY, devW, devH, 0, G.topDeviceImage, 1.0)
+        nvgBeginPath(vg)
+        nvgRect(vg, devX, devY, devW, devH)
+        nvgFillPaint(vg, devPaint)
+        nvgFill(vg)
+    end
+
+    if isGameScreen then
+        local hideTimer = ((game.state == STATE.SUCCESS or game.state == STATE.FAIL) and game.level >= 5 and game.showResignButtons)
+        if not hideTimer then
+            local sec = math.max(0, math.ceil(game.playTimer))
+            local shortSide = math.min(logW, logH)
+            local clockDigitH = shortSide * 0.0864
+            local devW2 = logW * 0.675
+            local devH2 = devW2 / 1.506
+            local devY2 = -devH2 * 0.30
+            local visibleBottom = devY2 + devH2
+            local clockCenterY = visibleBottom * 0.22
+            local clockTopY = clockCenterY - clockDigitH / 2
+            local isRed = sec <= 10
+            M.DrawDigitalClock(logW / 2, clockTopY, sec, clockDigitH, isRed)
+        end
+    end
+
+    -- 仅在游戏画面时绘制连线
+    if isGameScreen then
+        local LINE_W = 8
+
+        for i = 1, #game.leftRopes do
+            if game.leftRopes[i] then
+                RopePhysics.Draw(vg, game.leftRopes[i], LINE_W)
+            end
+        end
+
+        for i = 1, #game.rightRopes do
+            if game.rightRopes[i] then
+                RopePhysics.Draw(vg, game.rightRopes[i], LINE_W)
+            end
+        end
+
+        for _, rope in pairs(game.connRopes) do
+            RopePhysics.Draw(vg, rope, LINE_W)
+        end
+    end
+
+    -- 彩纸绘制
+    if game.state == STATE.SUCCESS and #game.confetti > 0 then
+        Confetti.Draw(vg, game.confetti, logW, logH)
+    end
+
+    -- 恢复晃动变换
+    if game.resignClicking then
+        nvgRestore(vg)
+    end
+
+    nvgEndFrame(vg)
+end
+
+return M
