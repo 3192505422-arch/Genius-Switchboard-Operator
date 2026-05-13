@@ -1,0 +1,264 @@
+-- ============================================================================
+-- DragInput.lua - 拖拽交互逻辑
+-- ============================================================================
+
+local Config = require "Config"
+local G = require "G"
+
+local M = {}
+
+local COLORS              = Config.COLORS
+local STATE               = Config.STATE
+local PHONE_EARPIECE_SIZE = Config.PHONE_EARPIECE_SIZE
+local FAIL_LINE_INTERVAL  = Config.FAIL_LINE_INTERVAL
+
+-- ============================================================================
+-- 连接检查
+-- ============================================================================
+
+function M.CheckConnection(leftIdx, rightIdx)
+    return G.game.leftPhones[leftIdx].colorIdx == G.game.rightPhones[rightIdx].colorIdx
+end
+
+function M.IsRightConnected(rightIdx)
+    for _, pc in ipairs(G.game.playerConnections) do
+        if pc.rightIdx == rightIdx then return true end
+    end
+    return false
+end
+
+function M.IsLeftConnected(leftIdx)
+    for _, pc in ipairs(G.game.playerConnections) do
+        if pc.leftIdx == leftIdx then return true end
+    end
+    return false
+end
+
+-- ============================================================================
+-- 听筒查找
+-- ============================================================================
+
+--- 查找手下方可抓取的听筒
+function M.FindPhoneUnderHand()
+    local game = G.game
+    local hx, hy = game.handX, game.handY
+    local epSz = PHONE_EARPIECE_SIZE
+
+    for i = 1, #game.leftEarpiecePos do
+        if not M.IsLeftConnected(i) then
+            local ep = game.leftEarpiecePos[i]
+            if ep and hx >= ep.x and hx <= ep.x + epSz and hy >= ep.y and hy <= ep.y + epSz then
+                return "left", i
+            end
+        end
+    end
+
+    for i = 1, #game.rightEarpiecePos do
+        if not M.IsRightConnected(i) then
+            local ep = game.rightEarpiecePos[i]
+            if ep and hx >= ep.x and hx <= ep.x + epSz and hy >= ep.y and hy <= ep.y + epSz then
+                return "right", i
+            end
+        end
+    end
+
+    return nil, nil
+end
+
+--- 查找手下方指定侧的听筒
+function M.FindPhoneUnderHandBySide(side)
+    local game = G.game
+    local hx, hy = game.handX, game.handY
+    local epSz = PHONE_EARPIECE_SIZE
+    local posList = (side == "left") and game.leftEarpiecePos or game.rightEarpiecePos
+
+    for i = 1, #posList do
+        local ep = posList[i]
+        if ep and hx >= ep.x and hx <= ep.x + epSz and hy >= ep.y and hy <= ep.y + epSz then
+            return i
+        end
+    end
+    return nil
+end
+
+-- ============================================================================
+-- 手外观更新
+-- ============================================================================
+
+function M.UpdateHandAppearance()
+    local game = G.game
+    if G.handWidget then
+        if game.handSlapping then
+            G.handWidget:SetStyle({ backgroundImage = "image/hand_slap.png" })
+        elseif game.handOverMosquito then
+            G.handWidget:SetStyle({ backgroundImage = "image/hand_swat.png" })
+        elseif game.handGrabbing then
+            G.handWidget:SetStyle({ backgroundImage = "image/hand_grab.png" })
+        else
+            G.handWidget:SetStyle({ backgroundImage = "image/hand_open.png" })
+        end
+    end
+end
+
+-- ============================================================================
+-- 拖拽连线指示
+-- ============================================================================
+
+function M.UpdateDragLine()
+    local game = G.game
+    if G.dragLineWidget then
+        if game.dragging and game.dragSide and game.dragIndex then
+            local widgets = game.dragSide == "left" and game.leftPhoneWidgets or game.rightPhoneWidgets
+            local w = widgets[game.dragIndex]
+            if w then
+                local layout = w:GetAbsoluteLayout()
+                if layout then
+                    local colorIdx = game.dragSide == "left"
+                        and game.leftPhones[game.dragIndex].colorIdx
+                        or game.rightPhones[game.dragIndex].colorIdx
+                    local color = COLORS[colorIdx]
+
+                    local colorIndicator = G.uiRoot and G.uiRoot:FindById("colorIndicator")
+                    if colorIndicator then
+                        colorIndicator:SetVisible(true)
+                        colorIndicator:SetStyle({
+                            left = game.handX - 6,
+                            top = game.handY - 30,
+                            backgroundColor = color.base,
+                        })
+                    end
+                end
+            end
+        else
+            local colorIndicator = G.uiRoot and G.uiRoot:FindById("colorIndicator")
+            if colorIndicator then
+                colorIndicator:SetVisible(false)
+            end
+        end
+    end
+end
+
+-- ============================================================================
+-- 进入失败状态
+-- ============================================================================
+
+function M.EnterFailState()
+    local game = G.game
+    local Dialogue = require "Dialogue"
+
+    for i = 1, #game.leftPhones do game.leftPhones[i].lit = true end
+    for i = 1, #game.rightPhones do game.rightPhones[i].lit = true end
+    game.state = STATE.FAIL
+
+    local available = {}
+    for i = 1, #Dialogue.FAIL_DIALOGUES do
+        if not game.failUsedIndices[i] then
+            available[#available + 1] = i
+        end
+    end
+    if #available == 0 then
+        game.failUsedIndices = {}
+        for i = 1, #Dialogue.FAIL_DIALOGUES do available[#available + 1] = i end
+    end
+    local pick = available[math.random(1, #available)]
+    game.failUsedIndices[pick] = true
+    game.failDialogue = Dialogue.FAIL_DIALOGUES[pick]
+    game.failLineCount = 1
+    game.failLineTimer = 0
+    game.failShowImage = false
+    game.dragging = false
+    game.handGrabbing = false
+    M.UpdateHandAppearance()
+    if G.RebuildGameUI then G.RebuildGameUI() end
+end
+
+-- ============================================================================
+-- 拖拽交互主逻辑
+-- ============================================================================
+
+function M.HandleDragInput()
+    local game = G.game
+    local Audio = require "Audio"
+    local Confetti = require "Confetti"
+
+    -- 鼠标按下 → 抓取听筒
+    if input:GetMouseButtonPress(MOUSEB_LEFT) then
+        local side, idx = M.FindPhoneUnderHand()
+        if side and idx then
+            local isConn = (side == "left" and M.IsLeftConnected(idx))
+                or (side == "right" and M.IsRightConnected(idx))
+            if not isConn then
+                game.dragging = true
+                game.dragSide = side
+                game.dragIndex = idx
+                game.handGrabbing = true
+                M.UpdateHandAppearance()
+                print("抓取" .. side .. "侧 #" .. idx)
+            end
+        end
+    end
+
+    -- 鼠标松开 → 检测连线
+    if input:GetMouseButtonDown(MOUSEB_LEFT) == false and game.dragging then
+        local leftIdx, rightIdx
+        local oppositeSide = (game.dragSide == "left") and "right" or "left"
+        local targetIdx = M.FindPhoneUnderHandBySide(oppositeSide)
+
+        if game.dragSide == "left" then
+            leftIdx = game.dragIndex
+            rightIdx = targetIdx
+        else
+            leftIdx = targetIdx
+            rightIdx = game.dragIndex
+        end
+
+        if leftIdx and rightIdx then
+            local targetConn = (oppositeSide == "left" and M.IsLeftConnected(leftIdx))
+                or (oppositeSide == "right" and M.IsRightConnected(rightIdx))
+            if not targetConn then
+                if M.CheckConnection(leftIdx, rightIdx) then
+                    game.correctCount = game.correctCount + 1
+                    game.playerConnections[#game.playerConnections + 1] = {
+                        leftIdx = leftIdx,
+                        rightIdx = rightIdx,
+                    }
+                    print(string.format("正确! (%d/%d)", game.correctCount, game.totalPairs))
+
+                    -- 合并听筒至中点
+                    local lep = game.leftEarpiecePos[leftIdx]
+                    local rep = game.rightEarpiecePos[rightIdx]
+                    local midX = (lep.x + rep.x) / 2
+                    local midY = (lep.y + rep.y) / 2
+                    game.leftEarpiecePos[leftIdx] = { x = midX, y = midY }
+                    game.rightEarpiecePos[rightIdx] = { x = midX, y = midY }
+
+                    if game.correctCount >= game.totalPairs then
+                        game.state = STATE.SUCCESS
+                        game.confettiTimer = 2.0
+                        Audio.PlayVictorySound()
+                        local logW = graphics:GetWidth() / G.uiScale
+                        local logH = graphics:GetHeight() / G.uiScale
+                        game.confetti = Confetti.Spawn(logW, logH)
+                        game.dragging = false
+                        game.handGrabbing = false
+                        M.UpdateHandAppearance()
+                        if G.RebuildGameUI then G.RebuildGameUI() end
+                        return
+                    end
+                else
+                    print("连线错误! 游戏结束")
+                    M.EnterFailState()
+                    return
+                end
+            end
+        end
+
+        game.dragging = false
+        game.dragRope = nil
+        game.handGrabbing = false
+        M.UpdateHandAppearance()
+        if G.RebuildGameUI then G.RebuildGameUI() end
+    end
+end
+
+return M
