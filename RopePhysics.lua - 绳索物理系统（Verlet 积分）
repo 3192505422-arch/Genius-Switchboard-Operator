@@ -1,0 +1,91 @@
+-- ============================================================================
+-- RopePhysics.lua - 绳索物理系统（Verlet 积分）
+-- ============================================================================
+
+local Config = require "Config"
+
+local M = {}
+
+local SEG_COUNT  = Config.ROPE_SEG_COUNT
+local GRAVITY    = Config.ROPE_GRAVITY
+local ITERATIONS = Config.ROPE_ITERATIONS
+local DAMPING    = Config.ROPE_DAMPING
+
+--- 创建绳索：从 (x1,y1) 到 (x2,y2)，slack 为松弛系数
+function M.Create(x1, y1, x2, y2, slack)
+    local n = SEG_COUNT + 1
+    local dist = math.sqrt((x2 - x1) ^ 2 + (y2 - y1) ^ 2)
+    local restLen = math.max(dist * (slack or 1.4), dist + 8)
+    local rope = { points = {}, restLen = restLen }
+    for i = 1, n do
+        local t = (i - 1) / (n - 1)
+        local px = x1 + (x2 - x1) * t
+        local py = y1 + (y2 - y1) * t
+        rope.points[i] = { x = px, y = py, ox = px, oy = py }
+    end
+    return rope
+end
+
+--- 更新绳索物理：固定两端点为 (x1,y1) 和 (x2,y2)
+function M.Update(rope, dt, x1, y1, x2, y2)
+    local pts = rope.points
+    local n = #pts
+    if n < 2 then return end
+    local segLen = rope.restLen / (n - 1)
+    local dtc = math.min(dt, 0.033)
+
+    -- Verlet 积分（跳过两端固定点）
+    for i = 2, n - 1 do
+        local p = pts[i]
+        local vx = (p.x - p.ox) * DAMPING
+        local vy = (p.y - p.oy) * DAMPING
+        p.ox = p.x
+        p.oy = p.y
+        p.x = p.x + vx
+        p.y = p.y + vy + GRAVITY * dtc * dtc
+    end
+
+    -- 固定两端
+    pts[1].x, pts[1].y = x1, y1
+    pts[1].ox, pts[1].oy = x1, y1
+    pts[n].x, pts[n].y = x2, y2
+    pts[n].ox, pts[n].oy = x2, y2
+
+    -- 距离约束求解
+    for _ = 1, ITERATIONS do
+        for i = 1, n - 1 do
+            local a, b = pts[i], pts[i + 1]
+            local dx = b.x - a.x
+            local dy = b.y - a.y
+            local d = math.sqrt(dx * dx + dy * dy)
+            if d > 0.001 then
+                local diff = (d - segLen) / d * 0.5
+                local cx, cy = dx * diff, dy * diff
+                if i > 1 then a.x = a.x + cx; a.y = a.y + cy end
+                if i + 1 < n then b.x = b.x - cx; b.y = b.y - cy end
+            end
+        end
+        pts[1].x, pts[1].y = x1, y1
+        pts[n].x, pts[n].y = x2, y2
+    end
+end
+
+--- 绘制绳索
+function M.Draw(vgCtx, rope, lineW, alpha)
+    local pts = rope.points
+    local n = #pts
+    if n < 2 then return end
+    alpha = alpha or 255
+    nvgBeginPath(vgCtx)
+    nvgMoveTo(vgCtx, pts[1].x, pts[1].y)
+    for i = 2, n do
+        nvgLineTo(vgCtx, pts[i].x, pts[i].y)
+    end
+    nvgStrokeColor(vgCtx, nvgRGBA(10, 10, 10, alpha))
+    nvgStrokeWidth(vgCtx, lineW)
+    nvgLineCap(vgCtx, NVG_ROUND)
+    nvgLineJoin(vgCtx, NVG_ROUND)
+    nvgStroke(vgCtx)
+end
+
+return M
