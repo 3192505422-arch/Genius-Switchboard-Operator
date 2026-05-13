@@ -1,0 +1,98 @@
+-- ============================================================================
+-- Dialogue.lua - 对话数据
+-- ============================================================================
+
+local M = {}
+
+-- 开场对话页数据
+M.INTRO_PAGES = {
+    { image = "image/character.png",  text = "欢迎，加入我们的大家庭，新入职的天才接线员！" },
+    { image = "image/char_point.png", text = "接下来是一些入职培训，不要害怕，很简单，只要通过你就可以拿下这个0.5元一天的工作" },
+    { image = "image/char_idle.png",  text = "良好的技术是实践促成的，我们开始吧" },
+    { image = "image/char_idle.png",  text = "记得享受哦！" },
+}
+
+-- 第二关后的中场剧情数据
+M.CUTSCENE_PAGES = {
+    { image = "image/boss_open.png",    text = "恭喜你完成了考察期！我的天才接线员！" },
+    { image = "image/boss_point.png",   text = "这些任务对于你来说真的太简单了，不是吗？" },
+    { image = "image/boss_pocket.png",  text = "所以我们给你多派了些单子，我相信你一定可以完成。" },
+    { image = "image/boss_pocket2.png", text = "另外，公司新加了一些广告业务，只需要你动动手指——就能给公司带来不俗的收益" },
+    { image = "image/boss_open2.png",   text = "期待你的表现，天才接线员！" },
+}
+
+-- 第四关后的中场剧情数据
+M.CUTSCENE2_PAGES = {
+    { image = "image/cutscene2_worker_box.png",   text = "老板，最近公司网络是不是被黑客入侵了？总是跳出来广告。" },
+    { image = "image/cutscene2_boss_normal.png",   text = "一切正常。" },
+    { image = "image/cutscene2_worker_box.png",   text = "最近公司的工作量是不是有点大？" },
+    { image = "image/cutscene2_boss_normal.png",   text = "一切正常。" },
+    { image = "image/cutscene2_worker_phone.png",  text = "可以加薪加休息时间么？" },
+    { image = "image/cutscene2_boss_normal.png",   text = "一切正常。" },
+    { image = "image/cutscene2_worker_box.png",   text = "..." },
+    { image = "image/cutscene2_boss_normal.png",   text = "最近有个好消息，公司引入了新的一批广告业务，操作十分简单只需要动动手指就可以完成。" },
+    { image = "image/cutscene2_boss_normal.png",   text = "相信这对你们来说就是小菜一碟～" },
+    { image = "image/cutscene2_boss_happy.png",    text = "加油！我的天才接线员们！\u{2764}\u{FE0F}\u{2764}\u{FE0F}\u{1F497}\u{1F497}" },
+}
+
+-- 失败对话数据
+M.FAIL_DIALOGUES = {
+    {
+        { side = "left",   text = "宝贝，想我没？" },
+        { side = "right",  text = "想啊。" },
+        { side = "left",   text = "今天下班别乱跑，我给你准备了惊喜。" },
+        { side = "right",  text = "这么巧？我也准备了。" },
+        { side = "left",   text = "那看来我们真是心有灵犀。" },
+        { side = "right",  text = "你今天怎么突然这么会说话？" },
+        { side = "left",   text = "因为我爱你啊。" },
+        { side = "center", text = "（开门声）" },
+        { side = "left",   text = "啊？？？啊！！！不啊，这是误会！！！" },
+        { side = "center", text = "……" },
+    },
+    {
+        { side = "left",   text = "喂，方案我看了，第三页重做。" },
+        { side = "right",  text = "好的王总，明天上班前给您。" },
+        { side = "left",   text = "嗯，你今天乖不乖？" },
+        { side = "right",  text = "……啊？" },
+        { side = "left",   text = "我问你今天乖不乖，没听见？" },
+        { side = "right",  text = "王总，您是不是……在跟我说话？" },
+        { side = "left",   text = "废话，不跟你跟谁。说。" },
+        { side = "right",  text = "挺……挺乖的？" },
+        { side = "left",   text = "那就好，回来奖励你。" },
+        { side = "right",  text = "王总，奖励……是绩效奖金吗？" },
+        { side = "center", text = "（沉默两秒）" },
+        { side = "left",   text = "……你谁？" },
+        { side = "right",  text = "我是小赵啊，王总？" },
+        { side = "center", text = "（挂断）" },
+    },
+    {
+        { side = "left",   text = "喂，你妈在家吗？" },
+        { side = "right",  text = "嗯？" },
+        { side = "left",   text = "我问你妈在不在。" },
+        { side = "right",  text = "在的，您要跟她说话吗？" },
+        { side = "left",   text = "不用，你让她把冰箱里的排骨拿出来化上。" },
+        { side = "right",  text = "好的……啊？什么排骨？" },
+        { side = "left",   text = "我说排骨化上，今晚炖豆角。" },
+        { side = "right",  text = "你是不是……打错了？" },
+        { side = "center", text = "（停顿两秒）" },
+        { side = "left",   text = "你不是李华？" },
+        { side = "right",  text = "……我不是李华。" },
+        { side = "center", text = "（挂断）" },
+    },
+    {
+        { side = "left",   text = "喂，你到了没有？" },
+        { side = "right",  text = "老师？到哪儿？" },
+        { side = "left",   text = "补习班啊，全班就等你一个了。" },
+        { side = "right",  text = "？我没有报补习班啊。" },
+        { side = "left",   text = "你没报？那我手机上'张伟'是谁？" },
+        { side = "right",  text = "我就是张伟，但我真没报。" },
+        { side = "center", text = "（停顿）" },
+        { side = "left",   text = "你几点睡的？" },
+        { side = "right",  text = "啊？跟几点睡有什么关系？" },
+        { side = "left",   text = "因为我现在怀疑你在做梦。" },
+        { side = "right",  text = "老师，那您先掐自己一下？" },
+        { side = "center", text = "（挂断）" },
+    },
+}
+
+return M
